@@ -50,6 +50,12 @@ const COLORS = {
   buttonPressed: '#b8901c',
   buttonBase: '#5a5366',
 
+  elevator: '#8d93a6',
+  elevatorDark: '#5d6273',
+  elevatorRail: '#3a3646',
+  elevatorOn: '#4ade80',
+  elevatorOff: '#e2564b',
+
   door: '#8a6d4a',
   doorDark: '#5e4a32',
   doorBar: '#c9a46b',
@@ -114,7 +120,10 @@ const isSolid = (tile) => tile !== TILE.EMPTY;
 // The static layer is drawn at a higher resolution, so it stays sharp when zoomed in.
 const STATIC_SCALE = 3;
 
-export function createRenderer(canvas, level) {
+// `sprites` (optional) is client/sprites/sprites.json plus the loaded images:
+// { frameSize, scale, anchorX, anchorY, headY, animations, images: { fire: Image, water: Image } }.
+// Without sprites, characters are drawn with shapes.
+export function createRenderer(canvas, level, sprites = null) {
   const ctx = canvas.getContext('2d');
 
   // Static layer (background + walls) is drawn once into an offscreen canvas.
@@ -137,6 +146,7 @@ export function createRenderer(canvas, level) {
     world = { buttons: {}, doors: {} },
     camera = { x: 0, y: 0, zoom: 1 },
     localCharacter = null,
+    elevatorOffsets = {},
   }) {
     const dt = lastTime === null ? 0 : Math.min(time - lastTime, 0.1);
     lastTime = time;
@@ -157,7 +167,11 @@ export function createRenderer(canvas, level) {
     drawExits(ctx, level, time);
     drawButtons(ctx, level, world.buttons ?? {});
     drawDoors(ctx, level, world.doors ?? {}, doorOpenness, dt);
-    for (const player of players) drawPlayer(ctx, player, time);
+    drawElevators(ctx, level, elevatorOffsets, world.elevators ?? {}, time);
+    for (const player of players) {
+      if (sprites?.images?.[player.character]) drawSpritePlayer(ctx, player, time, sprites);
+      else drawPlayer(ctx, player, time);
+    }
 
     // Screen space: arrows towards players outside the visible area
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -415,6 +429,59 @@ function drawDoors(ctx, level, doorStates, doorOpenness, dt) {
 }
 
 // ---------------------------------------------------------------------------
+// Elevators: metal platform on two rails that show the whole path
+// ---------------------------------------------------------------------------
+
+function drawElevators(ctx, level, offsets, activeStates, time) {
+  for (const elevator of level.elevators ?? []) {
+    const start = entityRect(elevator);
+    const travel = elevator.travel * TILE_SIZE;
+    const offset = offsets[elevator.id] ?? 0;
+    const top = Math.min(start.y, start.y - travel);
+    const bottom = Math.max(start.y, start.y - travel) + start.h;
+
+    // Rails along the path
+    ctx.fillStyle = COLORS.elevatorRail;
+    ctx.fillRect(start.x + 4, top, 2, bottom - top);
+    ctx.fillRect(start.x + start.w - 6, top, 2, bottom - top);
+
+    // Platform
+    const y = start.y - offset;
+    ctx.fillStyle = COLORS.elevator;
+    roundRect(ctx, start.x, y, start.w, start.h, 4);
+    ctx.fill();
+    ctx.fillStyle = COLORS.elevatorDark;
+    ctx.fillRect(start.x + 2, y + start.h - 6, start.w - 4, 4);
+
+    // Warning stripes on the top edge
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(start.x + 2, y + 2, start.w - 4, 5);
+    ctx.clip();
+    for (let sx = start.x - 10; sx < start.x + start.w + 10; sx += 10) {
+      ctx.fillStyle = COLORS.button;
+      ctx.beginPath();
+      ctx.moveTo(sx, y + 7);
+      ctx.lineTo(sx + 5, y + 2);
+      ctx.lineTo(sx + 10, y + 2);
+      ctx.lineTo(sx + 5, y + 7);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // Small light: green while moving / active
+    const moving = activeStates[elevator.id] ? offset !== travel : offset !== 0;
+    ctx.fillStyle = activeStates[elevator.id] || moving ? COLORS.elevatorOn : COLORS.elevatorOff;
+    ctx.globalAlpha = moving ? 0.6 + Math.sin(time * 12) * 0.4 : 1;
+    ctx.beginPath();
+    ctx.arc(start.x + start.w / 2, y + start.h - 11, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Exits: arched doorway in the character's color, with its element symbol
 // ---------------------------------------------------------------------------
 
@@ -472,7 +539,55 @@ function drawDropIcon(ctx, cx, cy, s) {
 }
 
 // ---------------------------------------------------------------------------
-// Players: rounded body, element crest on the head, eyes that follow the movement
+// Players drawn from a sprite sheet
+// The sprite's feet (anchorX, anchorY in the frame) are placed at the bottom-center of the
+// hitbox. A small flame / droplet above the head shows which element the player is.
+// ---------------------------------------------------------------------------
+
+function drawSpritePlayer(ctx, player, time, sprites) {
+  const image = sprites.images[player.character];
+  const dead = !player.alive || player.state === PLAYER_STATE.DEAD;
+  const anim = sprites.animations[dead ? PLAYER_STATE.DEAD : player.state] ?? sprites.animations.idle;
+
+  const row = anim.row ?? (player.facing < 0 ? anim.left : anim.right);
+  const frame = anim.frames[Math.floor(time * (anim.fps ?? 8)) % anim.frames.length];
+
+  const size = sprites.frameSize;
+  const scale = sprites.scale;
+  const feetX = player.x + PLAYER_WIDTH / 2;
+  const feetY = player.y + PLAYER_HEIGHT;
+
+  ctx.save();
+  if (dead) ctx.globalAlpha = 0.6;
+  ctx.imageSmoothingEnabled = false; // keep pixel art sharp
+  ctx.drawImage(
+    image,
+    frame * size,
+    row * size,
+    size,
+    size,
+    feetX - sprites.anchorX * scale,
+    feetY - sprites.anchorY * scale,
+    size * scale,
+    size * scale,
+  );
+
+  // Element marker above the head
+  if (!dead) {
+    const colors = CHARACTER_COLORS[player.character];
+    const headY = feetY - (sprites.anchorY - sprites.headY) * scale;
+    const bob = Math.sin(time * 4) * 1;
+    ctx.fillStyle = colors.main;
+    if (player.character === CHARACTER.FIRE) drawFlameIcon(ctx, feetX, headY - 7 + bob, 3.5);
+    else drawDropIcon(ctx, feetX, headY - 7 + bob, 3.5);
+  }
+
+  ctx.restore();
+}
+
+// ---------------------------------------------------------------------------
+// Players drawn with shapes (used when no sprite is available):
+// rounded body, element crest on the head, eyes that follow the movement
 // ---------------------------------------------------------------------------
 
 function drawPlayer(ctx, player, time) {

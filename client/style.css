@@ -1,0 +1,829 @@
+:root {
+  --bg: #14121a;
+  --panel: rgba(20, 18, 26, 0.85);
+  --text: #f2eee6;
+  --muted: #a49fae;
+  /* Character colors (game elements: exits, cards, markers) */
+  --fire: #ff5a3c;
+  --water: #3c9dff;
+  /* Babiworld brand colors (title, backgrounds, main buttons) */
+  --brand-green: #4ade80;
+  --brand-purple: #a855f7;
+  --brand-gradient: linear-gradient(90deg, var(--brand-green), var(--brand-purple));
+  /* Background image of the splash and menu screens (client/assets/world.png).
+     The dark layer on top keeps text readable: raise 0.45 for darker, 0 for the plain image. */
+  --menu-background:
+    linear-gradient(rgba(13, 11, 20, 0.45), rgba(13, 11, 20, 0.45)),
+    url('assets/world.png') center / cover no-repeat,
+    #14121a;
+  --control-bg: rgba(255, 255, 255, 0.18);
+  --control-bg-active: rgba(255, 255, 255, 0.4);
+  --control-border: rgba(255, 255, 255, 0.35);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  /* No text selection, no long-press menu, no double-tap zoom, no scrolling */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* ------------------------------------------------------------------ */
+/* App container: always landscape                                     */
+/* If the phone is held in portrait, the whole app is rotated 90° so   */
+/* the game is still shown in landscape (no "rotate your phone").      */
+/* ------------------------------------------------------------------ */
+
+#app {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100dvh;
+  overflow: hidden;
+  container-type: size; /* lets panels size themselves on the app (cqw / cqh), also when rotated */
+
+  /* Width of the control columns on the left and right of the map */
+  --side: 150px;
+  /* Space taken by the notch / status bar / home bar on each side of the game */
+  --inset-l: env(safe-area-inset-left, 0px);
+  --inset-r: env(safe-area-inset-right, 0px);
+}
+
+@media (orientation: portrait) {
+  #app {
+    width: 100dvh;
+    height: 100vw;
+    transform-origin: top left;
+    transform: rotate(90deg) translateY(-100%);
+
+    /* Rotated: the phone's top (status bar) is on the game's left,
+       the phone's bottom (home bar) is on the game's right. */
+    --inset-l: env(safe-area-inset-top, 0px);
+    --inset-r: env(safe-area-inset-bottom, 0px);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Game canvas: always 16:9, as large as possible, centered between    */
+/* the two control columns, so the controls never cover the map        */
+/* ------------------------------------------------------------------ */
+
+#game {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--side) + var(--inset-l));
+  right: calc(var(--side) + var(--inset-r));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  container-type: size; /* lets the canvas size itself with cqw / cqh */
+}
+
+#canvas {
+  display: block;
+  width: min(100cqw, calc(100cqh * 16 / 9));
+  height: min(100cqh, calc(100cqw * 9 / 16));
+  background: #1d1a24;
+}
+
+/* ------------------------------------------------------------------ */
+/* Touch controls: in the side columns, outside the map               */
+/* Left column: left / right arrows. Right column: jump.              */
+/* ------------------------------------------------------------------ */
+
+#controls {
+  position: absolute;
+  inset: 0;
+  pointer-events: none; /* only the buttons receive touches */
+}
+
+.control {
+  position: absolute;
+  bottom: 24px;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: 2px solid var(--control-border);
+  background: var(--control-bg);
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  transition: background 0.05s;
+}
+
+.control.active {
+  background: var(--control-bg-active);
+}
+
+/* Two 64px arrows + 10px gap = 138px, centered in the 150px left column */
+.control[data-control='left'] {
+  left: calc(var(--inset-l) + 6px);
+}
+
+.control[data-control='right'] {
+  left: calc(var(--inset-l) + 80px);
+}
+
+/* Jump: 90px, centered in the right column */
+.control[data-control='jump'] {
+  right: calc(var(--inset-r) + (var(--side) - 90px) / 2);
+  width: 90px;
+  height: 90px;
+  font-size: 34px;
+}
+
+/* In-game menu button: top of the left column */
+#game-menu-btn {
+  position: absolute;
+  top: 12px;
+  left: calc(var(--inset-l) + (var(--side) - 44px) / 2);
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  border: 1px solid var(--control-border);
+  background: var(--control-bg);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 22px;
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+
+#game-menu-btn:active {
+  background: var(--control-bg-active);
+}
+
+/* "Leave the game?" confirmation */
+.dialog-buttons {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-top: 18px;
+}
+
+/* Both dialog buttons: same size and same text size (the primary one only changes color) */
+.dialog-buttons .menu-btn,
+.dialog-buttons .menu-btn.primary {
+  min-width: 140px;
+  padding: 14px 20px;
+  font-size: 18px;
+}
+
+/* Level complete */
+.complete-title {
+  font-size: 30px;
+  font-weight: 700;
+  background: var(--brand-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+#complete .level-label {
+  margin: 4px 0 0;
+}
+
+#complete-status {
+  margin-top: 14px;
+  min-height: 20px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.menu-btn:disabled {
+  opacity: 0.5;
+}
+
+/* Completed levels get a check mark on the level selection screen */
+.level-card {
+  position: relative;
+}
+
+.level-done {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  font-size: 14px;
+  color: #7be38a;
+}
+
+#fullscreen-btn {
+  position: absolute;
+  top: 12px;
+  right: calc(var(--inset-r) + (var(--side) - 40px) / 2);
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid var(--control-border);
+  background: var(--control-bg);
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 20px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Splash screen: background + loading bar, shown at startup           */
+/* ------------------------------------------------------------------ */
+
+#splash {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  background: var(--menu-background);
+  transition: opacity 0.4s;
+}
+
+#splash.fade-out {
+  opacity: 0;
+  pointer-events: none;
+}
+
+#splash .title {
+  font-size: 56px;
+}
+
+#loading-bar {
+  width: 240px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.15);
+  overflow: hidden;
+}
+
+#loading-fill {
+  width: 0%;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--brand-gradient);
+  transition: width 0.3s;
+}
+
+#loading-text {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: -14px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Menu (room code) and messages                                       */
+/* ------------------------------------------------------------------ */
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 9, 14, 0.6);
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  padding: 24px 28px;
+  text-align: center;
+  /* Never bigger than the screen: if the content doesn't fit, the panel scrolls */
+  max-width: calc(100cqw - 32px);
+  max-height: calc(100cqh - 20px);
+  overflow-y: auto;
+  touch-action: pan-y;
+}
+
+.title {
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  margin-bottom: 4px;
+}
+
+.title .brand-a {
+  color: var(--brand-green);
+}
+
+.title .brand-b {
+  color: var(--brand-purple);
+}
+
+.subtitle {
+  color: var(--muted);
+  font-size: 14px;
+  margin-bottom: 18px;
+}
+
+/* Menu layout for landscape: info on the left, keypad on the right */
+.menu-layout {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  text-align: center;
+}
+
+.menu-info {
+  width: 260px;
+}
+
+/* Room code: 4 boxes, filled with the in-game keypad (no system keyboard) */
+#code-boxes {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+.code-box {
+  width: 46px;
+  height: 54px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 28px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.code-box.current {
+  border-color: var(--text);
+}
+
+#keypad {
+  display: grid;
+  grid-template-columns: repeat(3, 58px);
+  gap: 8px;
+}
+
+.key {
+  height: 46px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  font-size: 22px;
+  font-weight: 600;
+  touch-action: manipulation;
+}
+
+.key:active {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.key-join {
+  background: var(--text);
+  color: var(--bg);
+  font-size: 15px;
+}
+
+.key-join:active {
+  background: var(--muted);
+}
+
+#menu-status {
+  margin-top: 14px;
+  min-height: 40px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+/* ------------------------------------------------------------------ */
+/* Character selection                                                 */
+/* ------------------------------------------------------------------ */
+
+.select-title {
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.select-room {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.cards {
+  display: flex;
+  gap: 20px;
+  justify-content: center;
+  margin: 14px 0 6px;
+}
+
+.card {
+  width: 130px;
+  padding: 26px 10px 10px;
+  border-radius: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  touch-action: manipulation;
+  transition: border-color 0.15s, background 0.15s, opacity 0.15s;
+}
+
+.card[data-character='fire'].mine {
+  border-color: var(--fire);
+  background: rgba(255, 90, 60, 0.18);
+}
+
+.card[data-character='water'].mine {
+  border-color: var(--water);
+  background: rgba(60, 157, 255, 0.18);
+}
+
+.card.taken {
+  opacity: 0.35;
+}
+
+/* Small character drawn in CSS: body, crest and two eyes */
+.char {
+  position: relative;
+  width: 44px;
+  height: 56px;
+  border-radius: 16px;
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  padding-top: 16px;
+}
+
+.char::before {
+  content: '';
+  position: absolute;
+  top: -15px;
+  left: 50%;
+  width: 16px;
+  height: 16px;
+  border-radius: 0 50% 50% 50%;
+  transform: translateX(-50%) rotate(45deg);
+  background: var(--crest);
+}
+
+.char-fire {
+  background: var(--fire);
+  --crest: #ffb08a;
+}
+
+.char-water {
+  background: var(--water);
+  --crest: #a6d4ff;
+}
+
+/* When a sprite sheet is available, the card shows the sprite instead of the CSS character */
+.char.has-sprite {
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  border-radius: 0;
+  background-color: transparent;
+  background-repeat: no-repeat;
+  image-rendering: pixelated;
+}
+
+.char.has-sprite .eye {
+  display: none;
+}
+
+.char.has-sprite::before {
+  top: -8px;
+  width: 12px;
+  height: 12px;
+  background: var(--crest-strong);
+}
+
+.char-fire {
+  --crest-strong: var(--fire);
+}
+
+.char-water {
+  --crest-strong: var(--water);
+}
+
+.eye {
+  position: relative;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.eye::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #1a1a22;
+}
+
+.card-name {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.card-tag {
+  font-size: 12px;
+  min-height: 16px;
+  color: var(--muted);
+}
+
+.card.mine .card-tag {
+  color: var(--text);
+}
+
+#select-status {
+  min-height: 20px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+#select-status.error {
+  color: var(--fire);
+}
+
+/* ------------------------------------------------------------------ */
+/* Back button: top-left corner of any panel with the .has-back class  */
+/* ------------------------------------------------------------------ */
+
+.panel.has-back {
+  position: relative;
+  padding-top: 58px;
+}
+
+.back-btn {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  font-size: 14px;
+  touch-action: manipulation;
+}
+
+.back-btn:active {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.panel-title {
+  font-size: 22px;
+  font-weight: 700;
+}
+
+/* ------------------------------------------------------------------ */
+/* Home: big title + Play / Settings                                   */
+/* ------------------------------------------------------------------ */
+
+#home {
+  flex-direction: column;
+  gap: 28px;
+  background: var(--menu-background);
+}
+
+/* Same background image on the other menu screens
+   (the in-game dialogs keep the transparent .overlay background, so the game stays visible) */
+#menu,
+#select,
+#levels,
+#settings {
+  background: var(--menu-background);
+}
+
+.home-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 22px;
+  padding: 26px 44px 30px;
+  background: rgba(20, 18, 26, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 22px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+#home .title {
+  font-size: 56px;
+  margin: 0;
+}
+
+.home-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 220px;
+}
+
+.menu-btn {
+  padding: 14px 20px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(20, 18, 26, 0.85);
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 700;
+  touch-action: manipulation;
+  transition: transform 0.08s;
+}
+
+.menu-btn:active {
+  transform: scale(0.96);
+}
+
+.menu-btn.primary {
+  border: none;
+  background: var(--brand-gradient);
+  color: #fff;
+  font-size: 22px;
+  padding: 16px 20px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Settings (empty for now: music and sound will go here)              */
+/* ------------------------------------------------------------------ */
+
+#settings .panel {
+  min-width: 320px;
+}
+
+.placeholder-text {
+  margin-top: 16px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+/* ------------------------------------------------------------------ */
+/* Level selection                                                     */
+/* ------------------------------------------------------------------ */
+
+/* The level screen is as wide as the screen allows */
+#levels .panel {
+  width: min(760px, calc(100cqw - 32px));
+  padding-left: 18px;
+  padding-right: 18px;
+}
+
+/* Levels in one row that scrolls sideways when they don't fit,
+   so the card never grows taller than the screen (more levels will come with the story) */
+#level-list {
+  display: flex;
+  gap: 12px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin-top: 12px;
+  padding: 4px 4px 10px;
+  touch-action: pan-x;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+/* Center the row when it fits, scroll from the first card when it doesn't */
+#level-list > :first-child {
+  margin-left: auto;
+}
+
+#level-list > :last-child {
+  margin-right: auto;
+}
+
+.level-card {
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+  width: 104px;
+  height: 104px;
+  border-radius: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  touch-action: manipulation;
+  transition: transform 0.08s;
+}
+
+.level-card:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.level-number {
+  font-size: 32px;
+  font-weight: 700;
+  background: var(--brand-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.level-name {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.level-card.locked {
+  opacity: 0.4;
+  border-style: dashed;
+}
+
+.level-card.locked .level-number {
+  background: none;
+  color: var(--muted);
+}
+
+/* Level proposed by one player, waiting for the other one */
+#proposal {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 14px;
+  font-size: 14px;
+}
+
+#proposal.hidden {
+  display: none;
+}
+
+.menu-btn.small,
+.menu-btn.primary.small {
+  padding: 8px 16px;
+  font-size: 15px;
+  border-radius: 10px;
+}
+
+#levels-status {
+  margin-top: 10px;
+  min-height: 18px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.level-card.proposed {
+  border-color: var(--brand-green);
+  background: rgba(74, 222, 128, 0.12);
+}
+
+.level-card.proposed-other {
+  border-color: var(--brand-purple);
+  background: rgba(168, 85, 247, 0.15);
+}
+
+/* Level shown on the code and selection screens */
+.level-label {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+
+#menu-status.error {
+  color: var(--fire);
+}
+
+#message-text {
+  font-size: 26px;
+  font-weight: 700;
+}
+
+#message-sub {
+  margin-top: 6px;
+  font-size: 14px;
+  color: var(--muted);
+}

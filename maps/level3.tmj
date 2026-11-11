@@ -1,0 +1,220 @@
+{
+  "type": "map",
+  "version": "1.10",
+  "tiledversion": "1.11.0",
+  "orientation": "orthogonal",
+  "renderorder": "right-down",
+  "width": 32,
+  "height": 18,
+  "tilewidth": 30,
+  "tileheight": 30,
+  "infinite": false,
+  "nextlayerid": 3,
+  "nextobjectid": 10,
+  "properties": [
+    {
+      "name": "name",
+      "type": "string",
+      "value": "Twin Towers"
+    }
+  ],
+  "tilesets": [
+    {
+      "firstgid": 1,
+      "source": "babiworld-tiles.tsj"
+    }
+  ],
+  "layers": [
+    {
+      "id": 1,
+      "name": "tiles",
+      "type": "tilelayer",
+      "width": 32,
+      "height": 18,
+      "x": 0,
+      "y": 0,
+      "opacity": 1,
+      "visible": true,
+      "data": [
+        1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+        1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+        1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+        1,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,1,
+        1,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,
+        1,0,0,0,0,1,1,1,0,0,0,0,1,1,1,1,1,1,1,1,0,0,0,0,1,1,1,0,0,0,0,1,
+        1,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,
+        1,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,1,
+        1,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,
+        1,0,0,0,0,1,3,1,0,0,0,0,1,1,1,1,1,1,1,1,0,0,0,0,1,2,1,0,0,0,0,1,
+        1,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,
+        1,1,1,1,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,1,1,1,1,
+        1,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,
+        1,0,0,0,0,1,1,1,0,0,0,0,1,1,1,1,1,1,1,1,0,0,0,0,1,1,1,0,0,0,0,1,
+        1,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,
+        1,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,1,
+        1,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,
+        1,1,1,1,1,3,3,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,1,1,1,1,1
+      ]
+    },
+    {
+      "id": 2,
+      "name": "objects",
+      "type": "objectgroup",
+      "draworder": "topdown",
+      "x": 0,
+      "y": 0,
+      "opacity": 1,
+      "visible": true,
+      "objects": [
+        {
+          "id": 1,
+          "name": "spawn_fire",
+          "type": "spawn",
+          "x": 60,
+          "y": 480,
+          "width": 30,
+          "height": 30,
+          "rotation": 0,
+          "visible": true,
+          "properties": [
+            {
+              "name": "character",
+              "type": "string",
+              "value": "fire"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "name": "spawn_water",
+          "type": "spawn",
+          "x": 870,
+          "y": 480,
+          "width": 30,
+          "height": 30,
+          "rotation": 0,
+          "visible": true,
+          "properties": [
+            {
+              "name": "character",
+              "type": "string",
+              "value": "water"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "name": "button_1",
+          "type": "button",
+          "x": 300,
+          "y": 60,
+          "width": 30,
+          "height": 30,
+          "rotation": 0,
+          "visible": true,
+          "properties": [
+            {
+              "name": "targets",
+              "type": "string",
+              "value": "door_2"
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "name": "button_2",
+          "type": "button",
+          "x": 630,
+          "y": 60,
+          "width": 30,
+          "height": 30,
+          "rotation": 0,
+          "visible": true,
+          "properties": [
+            {
+              "name": "targets",
+              "type": "string",
+              "value": "door_1"
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "name": "button_3",
+          "type": "button",
+          "x": 450,
+          "y": 60,
+          "width": 30,
+          "height": 30,
+          "rotation": 0,
+          "visible": true,
+          "properties": [
+            {
+              "name": "targets",
+              "type": "string",
+              "value": "door_1,door_2"
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "name": "door_1",
+          "type": "door",
+          "x": 360,
+          "y": 30,
+          "width": 30,
+          "height": 60,
+          "rotation": 0,
+          "visible": true
+        },
+        {
+          "id": 7,
+          "name": "door_2",
+          "type": "door",
+          "x": 570,
+          "y": 30,
+          "width": 30,
+          "height": 60,
+          "rotation": 0,
+          "visible": true
+        },
+        {
+          "id": 8,
+          "name": "exit_fire",
+          "type": "exit",
+          "x": 420,
+          "y": 30,
+          "width": 30,
+          "height": 60,
+          "rotation": 0,
+          "visible": true,
+          "properties": [
+            {
+              "name": "character",
+              "type": "string",
+              "value": "fire"
+            }
+          ]
+        },
+        {
+          "id": 9,
+          "name": "exit_water",
+          "type": "exit",
+          "x": 510,
+          "y": 30,
+          "width": 30,
+          "height": 60,
+          "rotation": 0,
+          "visible": true,
+          "properties": [
+            {
+              "name": "character",
+              "type": "string",
+              "value": "water"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

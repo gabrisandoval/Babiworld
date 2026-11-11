@@ -20,7 +20,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
 
 const PORT = process.env.PORT || 3000;
-const LEVEL_COMPLETE_DELAY = 3000; // ms before restarting after a win (prototype only)
 
 // ---------------------------------------------------------------------------
 // Levels: every level listed in levels/index.json is loaded at startup
@@ -30,7 +29,6 @@ const readJson = (...parts) => JSON.parse(fs.readFileSync(path.join(ROOT, ...par
 
 const levelIndex = readJson('levels', 'index.json').levels;
 const levels = new Map(levelIndex.map(({ id }) => [id, readJson('levels', `${id}.json`)]));
-const DEFAULT_LEVEL_ID = levelIndex[0].id;
 
 console.log(`Loaded ${levels.size} level(s): ${[...levels.keys()].join(', ')}`);
 
@@ -51,24 +49,35 @@ const io = new Server(server);
 // ---------------------------------------------------------------------------
 
 /**
+ * A room lasts for the whole session of a pair of players:
+ * join once with the PIN, choose the characters, then play as many levels as you like.
+ *
  * code -> {
  *   code: string,
  *   players: Map<socketId, { id, character, snapshot }>,
- *   levelId: string,         // chosen by the player who creates the room
- *   status: 'waiting' | 'playing' | 'dead' | 'complete',
+ *   status: 'select'    // characters not chosen yet (or only one player in the room)
+ *         | 'levels'    // both ready: choosing the level together
+ *         | 'playing' | 'dead' | 'complete',
+ *   levelId: string | null,          // level being played (or the last one)
+ *   proposal: { levelId, by } | null, // level proposed on the level screen, waiting for the other player
+ *   votes: Map<socketId, 'replay' | 'next'>, // choices on the "Level complete" screen
  *   world: { buttons, doors },
  *   timer: Timeout | null
  * }
  */
 const rooms = new Map();
 
-function createRoom(code, levelId) {
+const IN_GAME = new Set(['playing', 'dead', 'complete']);
+
+function createRoom(code) {
   const room = {
     code,
     players: new Map(),
-    levelId,
-    status: 'waiting',
-    world: computeWorldState(levels.get(levelId), []),
+    status: 'select',
+    levelId: null,
+    proposal: null,
+    votes: new Map(),
+    world: { buttons: {}, doors: {} },
     timer: null,
   };
   rooms.set(code, room);
@@ -76,6 +85,12 @@ function createRoom(code, levelId) {
 }
 
 const roomLevel = (room) => levels.get(room.levelId);
+
+// Level after the given one in levels/index.json (null if it is the last one).
+function nextLevelId(levelId) {
+  const i = levelIndex.findIndex((l) => l.id === levelId);
+  return i >= 0 && i + 1 < levelIndex.length ? levelIndex[i + 1].id : null;
+}
 
 // Room codes: 3 to 8 letters or digits, case-insensitive.
 function normalizeCode(code) {
@@ -91,8 +106,8 @@ function isTaken(room, character, exceptId) {
   return [...room.players.values()].some((p) => p.id !== exceptId && p.character === character);
 }
 
-// The game starts when there are 2 players and both chose a (different) character.
-function canStart(room) {
+// Two players with two different characters: they can choose and play levels.
+function bothReady(room) {
   const players = [...room.players.values()];
   return (
     players.length === 2 &&
@@ -107,7 +122,26 @@ function publicPlayers(room) {
 
 // Room info sent to the clients on every change.
 function roomUpdate(room) {
-  return { code: room.code, levelId: room.levelId, players: publicPlayers(room) };
+  return {
+    code: room.code,
+    status: room.status,
+    levelId: room.levelId,
+    proposal: room.proposal,
+    players: publicPlayers(room),
+  };
+}
+
+function broadcastRoom(room) {
+  io.to(room.code).emit('room:update', roomUpdate(room));
+}
+
+// Outside a game, the room is on the character screen until both are ready, then on the level screen.
+function backToLobby(room) {
+  clearRoomTimer(room);
+  room.status = bothReady(room) ? 'levels' : 'select';
+  room.proposal = null;
+  room.votes.clear();
+  for (const player of room.players.values()) player.snapshot = null;
 }
 
 // Players with a known position, in the shape expected by the shared world logic.
@@ -124,9 +158,12 @@ function clearRoomTimer(room) {
   }
 }
 
-// Starts (or restarts) the level for both players.
-function startLevel(room) {
+// Starts (or restarts) a level for both players.
+function startLevel(room, levelId) {
   clearRoomTimer(room);
+  room.levelId = levelId;
+  room.proposal = null;
+  room.votes.clear();
   for (const player of room.players.values()) player.snapshot = null;
   room.world = computeWorldState(roomLevel(room), []);
   room.status = 'playing';
@@ -135,23 +172,26 @@ function startLevel(room) {
     world: room.world,
     players: publicPlayers(room),
   });
+  console.log(`[${room.code}] start ${room.levelId}`);
 }
 
 function handleDeath(room, character) {
   room.status = 'dead';
   io.to(room.code).emit('player:died', { character });
-  room.timer = setTimeout(() => startLevel(room), RESPAWN_DELAY);
+  room.timer = setTimeout(() => startLevel(room, room.levelId), RESPAWN_DELAY);
 }
 
+// After a win the game waits: each player chooses Play again, Next level or Levels.
 function handleLevelComplete(room) {
   room.status = 'complete';
-  io.to(room.code).emit('level:complete', { levelId: room.levelId });
-  room.timer = setTimeout(() => startLevel(room), LEVEL_COMPLETE_DELAY);
+  room.votes.clear();
+  io.to(room.code).emit('level:complete', { levelId: room.levelId, nextLevelId: nextLevelId(room.levelId) });
 }
 
 // Recomputes buttons and doors, and notifies both players only if something changed.
 function updateWorld(room) {
-  const world = computeWorldState(roomLevel(room), activePlayers(room));
+  // Previous door states: an open door stays open while someone is inside the doorway.
+  const world = computeWorldState(roomLevel(room), activePlayers(room), room.world.doors);
   if (JSON.stringify(world) !== JSON.stringify(room.world)) {
     room.world = world;
     io.to(room.code).emit('world:update', world);
@@ -181,8 +221,7 @@ function sanitizeSnapshot(data) {
 io.on('connection', (socket) => {
   let room = null;
 
-  // Payload: { code, levelId }. The player who creates the room decides the level;
-  // whoever joins an existing room plays the room's level.
+  // Payload: { code }. The room is created by the first player who uses that PIN.
   socket.on('room:join', (data) => {
     if (room) return; // already in a room
 
@@ -192,8 +231,7 @@ io.on('connection', (socket) => {
       return;
     }
 
-    const levelId = levels.has(data?.levelId) ? data.levelId : DEFAULT_LEVEL_ID;
-    const target = rooms.get(code) ?? createRoom(code, levelId);
+    const target = rooms.get(code) ?? createRoom(code);
     if (target.players.size >= 2) {
       socket.emit('room:error', { message: 'This room is full.' });
       return;
@@ -203,15 +241,16 @@ io.on('connection', (socket) => {
     room = target;
     room.players.set(socket.id, { id: socket.id, character: null, snapshot: null });
     socket.join(code);
+    backToLobby(room);
 
-    io.to(code).emit('room:update', roomUpdate(room));
-    console.log(`[${code}] player joined (${room.players.size}/2), level ${room.levelId}`);
+    broadcastRoom(room);
+    console.log(`[${code}] player joined (${room.players.size}/2)`);
   });
 
   // Character selection: fire or water, never the same as the other player.
   // Choosing again switches character (if the other one is free).
   socket.on('player:choose', (character) => {
-    if (!room || room.status !== 'waiting') return;
+    if (!room || room.status !== 'select') return;
     const player = room.players.get(socket.id);
     if (!player || !VALID_CHARACTERS.has(character)) return;
 
@@ -221,10 +260,35 @@ io.on('connection', (socket) => {
     }
 
     player.character = character;
-    io.to(room.code).emit('room:update', roomUpdate(room));
+    backToLobby(room); // moves the room to the level screen once both are ready
+    broadcastRoom(room);
     console.log(`[${room.code}] player chose ${character}`);
+  });
 
-    if (canStart(room)) startLevel(room);
+  // Level screen: one player proposes a level, the other confirms it.
+  // Proposing the level the other player already proposed counts as confirming it.
+  socket.on('level:propose', (levelId) => {
+    if (!room || room.status !== 'levels' || !levels.has(levelId)) return;
+
+    if (room.proposal && room.proposal.by !== socket.id && room.proposal.levelId === levelId) {
+      startLevel(room, levelId);
+      return;
+    }
+
+    room.proposal = { levelId, by: socket.id };
+    broadcastRoom(room);
+  });
+
+  socket.on('level:accept', () => {
+    if (!room || room.status !== 'levels' || !room.proposal) return;
+    if (room.proposal.by === socket.id) return; // you can't confirm your own proposal
+    startLevel(room, room.proposal.levelId);
+  });
+
+  socket.on('level:cancel', () => {
+    if (!room || room.status !== 'levels' || room.proposal?.by !== socket.id) return;
+    room.proposal = null;
+    broadcastRoom(room);
   });
 
   socket.on('player:state', (data) => {
@@ -248,31 +312,55 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Removes this player from its room (used by "Back" and by disconnection).
+  // "Level complete" screen: Play again / Next level happen when both players chose the same.
+  socket.on('level:vote', (choice) => {
+    if (!room || room.status !== 'complete') return;
+    if (choice !== 'replay' && choice !== 'next') return;
+    if (choice === 'next' && !nextLevelId(room.levelId)) return;
+
+    room.votes.set(socket.id, choice);
+    const choices = [...room.players.keys()].map((id) => room.votes.get(id));
+
+    if (room.players.size === 2 && choices.every((c) => c === choice)) {
+      startLevel(room, choice === 'next' ? nextLevelId(room.levelId) : room.levelId);
+    } else {
+      io.to(room.code).emit('level:votes', Object.fromEntries(room.votes));
+    }
+  });
+
+  // Leave the current level (in-game menu, or "Levels" after a win): both players
+  // go back to the level screen, still in the same room.
+  socket.on('level:quit', () => {
+    if (!room || !IN_GAME.has(room.status)) return;
+    backToLobby(room);
+    socket.to(room.code).emit('level:quit', { byOther: true });
+    broadcastRoom(room);
+  });
+
+  // Removes this player from its room (Back to home, or disconnection).
   function leaveRoom() {
     if (!room) return;
     const left = room;
     const player = left.players.get(socket.id);
     left.players.delete(socket.id);
     socket.leave(left.code);
-    clearRoomTimer(left);
     room = null;
 
     console.log(`[${left.code}] ${player?.character ?? 'player'} left`);
 
     if (left.players.size === 0) {
+      clearRoomTimer(left);
       rooms.delete(left.code);
       return;
     }
 
-    left.status = 'waiting';
+    // The player who stays keeps the room and their character, and waits for someone to join.
+    backToLobby(left);
     io.to(left.code).emit('player:disconnected', { character: player?.character });
-    io.to(left.code).emit('room:update', roomUpdate(left));
+    broadcastRoom(left);
   }
 
-  // "Back" button on the selection screen: leave the room and go back to the menu.
   socket.on('room:leave', leaveRoom);
-
   socket.on('disconnect', leaveRoom);
 });
 
