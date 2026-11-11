@@ -3,7 +3,7 @@
 // Flow:
 //   splash (real loading: level + server connection, min 1.5 s)
 //   -> menu (room code)
-//   -> waiting for the other player
+//   -> lobby: character selection (fire / water, never the same), waiting for the other player
 //   -> playing  <-> dead / complete (server restarts the level)
 
 import {
@@ -21,11 +21,6 @@ const SPLASH_MIN_TIME = 1500; // ms
 const CODE_LENGTH = 4; // room code: 4 digits
 const SEND_INTERVAL = 1 / CLIENT_SEND_RATE; // s
 const MAX_SNAPSHOTS = 30; // remote states kept for interpolation
-
-const CHARACTER_NAMES = {
-  [CHARACTER.FIRE]: 'Fire (red)',
-  [CHARACTER.WATER]: 'Water (blue)',
-};
 
 // ---------------------------------------------------------------------------
 // DOM
@@ -48,6 +43,12 @@ const keypadEl = $('keypad');
 const codeBoxes = [...document.querySelectorAll('.code-box')];
 const menuStatus = $('menu-status');
 
+const selectEl = $('select');
+const selectCode = $('select-code');
+const selectStatus = $('select-status');
+const selectBack = $('select-back');
+const cards = [...document.querySelectorAll('.card')];
+
 const messageEl = $('message');
 const messageText = $('message-text');
 const messageSub = $('message-sub');
@@ -66,6 +67,11 @@ function setMenuStatus(text, isError = false) {
   menuStatus.classList.toggle('error', isError);
 }
 
+function setSelectStatus(text, isError = false) {
+  selectStatus.textContent = text;
+  selectStatus.classList.toggle('error', isError);
+}
+
 // ---------------------------------------------------------------------------
 // Game state
 // ---------------------------------------------------------------------------
@@ -74,9 +80,10 @@ const input = createInput(controlsEl);
 const socket = io({ autoConnect: false });
 const levels = {}; // levelId -> parsed JSON
 
-let phase = 'loading'; // loading | menu | waiting | playing | dead | complete
+let phase = 'loading'; // loading | menu | lobby | playing | dead | complete
 let roomCode = null;
 let myCharacter = null;
+let otherLeft = false; // the other player disconnected (shown on the selection screen)
 
 let level = null;
 let renderer = null;
@@ -225,12 +232,72 @@ window.addEventListener('keydown', (event) => {
 renderCode();
 
 // ---------------------------------------------------------------------------
+// Character selection (lobby)
+// Each player taps Fire or Water. A character taken by the other player is disabled.
+// Tapping the other free card switches character. The game starts when both have chosen.
+// ---------------------------------------------------------------------------
+
+function showSelect(code, me, other) {
+  selectCode.textContent = code;
+
+  for (const card of cards) {
+    const character = card.dataset.character;
+    const mine = me.character === character;
+    const taken = other?.character === character;
+    card.classList.toggle('mine', mine);
+    card.classList.toggle('taken', taken);
+    card.disabled = taken;
+    card.querySelector('.card-tag').textContent = mine ? 'You' : taken ? 'Other player' : '';
+  }
+
+  if (!other) {
+    setSelectStatus(otherLeft ? 'The other player left. Waiting for someone to join…' : 'Waiting for the other player to join…');
+  } else if (!me.character) {
+    setSelectStatus('Choose Fire or Water');
+  } else if (!other.character) {
+    setSelectStatus('Waiting for the other player to choose…');
+  } else {
+    setSelectStatus('Starting…');
+  }
+
+  show(selectEl);
+}
+
+for (const card of cards) {
+  card.addEventListener('click', () => {
+    if (phase !== 'lobby' || card.disabled) return;
+    const character = card.dataset.character;
+    if (character !== myCharacter) socket.emit('player:choose', character);
+  });
+}
+
+// "Back": leave the room and return to the keypad with an empty code.
+selectBack.addEventListener('click', () => {
+  if (phase !== 'lobby') return;
+  socket.emit('room:leave');
+
+  phase = 'menu';
+  roomCode = null;
+  myCharacter = null;
+  otherLeft = false;
+  typedCode = '';
+  renderCode();
+  setMenuStatus('');
+  hide(selectEl);
+  show(menuEl);
+});
+
+// ---------------------------------------------------------------------------
 // Socket events
 // ---------------------------------------------------------------------------
 
 socket.on('room:error', ({ message }) => {
-  roomCode = null;
-  setMenuStatus(message, true);
+  if (phase === 'menu') {
+    roomCode = null; // could not join: stay on the menu
+    setMenuStatus(message, true);
+  } else {
+    setSelectStatus(message, true);
+  }
 });
 
 socket.on('room:update', ({ code, players }) => {
@@ -238,22 +305,29 @@ socket.on('room:update', ({ code, players }) => {
   if (!me) return;
   myCharacter = me.character;
 
-  if (players.length < 2 && (phase === 'menu' || phase === 'waiting')) {
-    phase = 'waiting';
-    setMenuStatus(`Room ${code} — you are ${CHARACTER_NAMES[myCharacter]}. Waiting for the other player…`);
-  }
+  // During the game the character can't change: ignore updates until we're back in the lobby.
+  if (phase === 'playing' || phase === 'dead' || phase === 'complete') return;
+
+  phase = 'lobby';
+  hide(menuEl);
+  hide(messageEl);
+  hide(controlsEl);
+  showSelect(code, me, players.find((p) => p.id !== socket.id));
 });
 
-socket.on('game:start', async ({ levelId, world: startWorld }) => {
+socket.on('game:start', async ({ levelId, world: startWorld, players }) => {
   useLevel(await loadLevel(levelId));
 
+  myCharacter = players.find((p) => p.id === socket.id)?.character ?? myCharacter;
   const otherCharacter = myCharacter === CHARACTER.FIRE ? CHARACTER.WATER : CHARACTER.FIRE;
   localPlayer = createPlayer(myCharacter, level);
   remote = { character: otherCharacter, snapshots: [] };
   world = startWorld;
+  otherLeft = false;
 
   input.reset();
   hide(menuEl);
+  hide(selectEl);
   hide(messageEl);
   show(controlsEl);
   phase = 'playing';
@@ -280,10 +354,14 @@ socket.on('level:complete', () => {
   showMessage('Level complete!', 'Well done, both of you');
 });
 
+// The server follows this with a room:update, which brings back the selection screen.
 socket.on('player:disconnected', () => {
-  phase = 'waiting';
+  phase = 'lobby';
+  otherLeft = true;
+  localPlayer = null;
+  remote = null;
   hide(controlsEl);
-  showMessage('The other player left', `Waiting for someone to join room ${roomCode}…`);
+  hide(messageEl);
 });
 
 socket.on('disconnect', () => {
@@ -295,7 +373,8 @@ socket.on('disconnect', () => {
 // After a reconnection the server sees a new player: join the same room again.
 socket.on('connect', () => {
   if (roomCode && phase !== 'loading' && phase !== 'menu') {
-    phase = 'waiting';
+    phase = 'lobby';
+    hide(selectEl);
     showMessage('Reconnected', `Rejoining room ${roomCode}…`);
     socket.emit('room:join', roomCode);
   }

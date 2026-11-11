@@ -67,6 +67,7 @@ In the future, levels can be designed with the **Tiled** editor and exported to 
 | Event             | Payload                                   |
 |-------------------|-------------------------------------------|
 | `room:join`       | room code                                 |
+| `player:choose`   | chosen character (`fire` or `water`)      |
 | `player:state`    | position, velocity, direction, animation  |
 | `player:interact` | interaction with an object                |
 
@@ -75,7 +76,7 @@ In the future, levels can be designed with the **Tiled** editor and exported to 
 | Event                 | Payload                                  |
 |-----------------------|------------------------------------------|
 | `room:update`         | players in the room and assigned character |
-| `room:error`          | invalid room code or room full           |
+| `room:error`          | invalid room code, room full, or character already taken |
 | `game:start`          | game start, level                        |
 | `player:state`        | the other player's state                 |
 | `world:update`        | state of doors, buttons, platforms       |
@@ -83,7 +84,7 @@ In the future, levels can be designed with the **Tiled** editor and exported to 
 | `level:complete`      | level cleared                            |
 | `player:disconnected` | the other player disconnected            |
 
-(`room:create`, `player:ready` and character selection will come with the full lobby.)
+(`room:create` and `player:ready` will come with the full lobby.)
 
 ---
 
@@ -109,9 +110,14 @@ In the future, levels can be designed with the **Tiled** editor and exported to 
 - **Fullscreen** button
 - **"Rotate your phone"** notice when the device is in portrait
 
-### Minimal lobby
+### Lobby
 
-Both players enter the **same room code**: the first to join is red, the second is blue.
+1. Splash screen with a real loading bar, then **"Tap to start"** (enables fullscreen where supported)
+2. Both players enter the **same 4-digit room code** with the in-game keypad (no system keyboard, so it works in landscape even with rotation lock)
+3. **Character selection**: each player picks **Fire** or **Water**. A character taken by the other player is disabled, and tapping the other free card switches character
+4. The game starts as soon as both players have chosen
+
+If a player leaves, the other one goes back to the selection screen and keeps their character.
 
 ### Graphics
 
@@ -160,8 +166,8 @@ To play on two phones:
 
 1. Connect the computer and both phones to the **same Wi-Fi network**
 2. Open the **Network** address in the browser on both phones
-3. Enter the **same room code** on both phones and tap **Join**
-4. The first player is **Fire (red)**, the second is **Water (blue)**
+3. Tap to start, enter the **same 4-digit room code** on both phones and tap **Join**
+4. Each player chooses **Fire (red)** or **Water (blue)** — they can't pick the same one
 
 On a PC you can test with two browser windows: arrows / WASD to move, W / space to jump.
 
