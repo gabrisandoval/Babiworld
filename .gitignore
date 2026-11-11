@@ -1,0 +1,14 @@
+# Dependencies (recreated with npm install)
+node_modules/
+
+# Logs
+npm-debug.log*
+
+# Environment variables
+.env
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
