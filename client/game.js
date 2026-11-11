@@ -1,13 +1,19 @@
 // Game entry point: splash screen, menu, connection to the server, game loop.
 //
 // Flow:
-//   splash (real loading: level + server connection, min 1.5 s)
+//   splash (real loading: levels + server connection, min 1.5 s)
+//   -> home (Play / Settings)
+//   -> level selection
 //   -> menu (room code)
 //   -> lobby: character selection (fire / water, never the same), waiting for the other player
 //   -> playing  <-> dead / complete (server restarts the level)
 
 import {
   CHARACTER,
+  WORLD_WIDTH,
+  WORLD_HEIGHT,
+  PLAYER_WIDTH,
+  PLAYER_HEIGHT,
   FIXED_DT,
   CLIENT_SEND_RATE,
   INTERPOLATION_DELAY,
@@ -16,11 +22,16 @@ import { createPlayer, stepPlayer, playerSnapshot } from '/shared/physics.js';
 import { createInput } from './input.js';
 import { createRenderer } from './render.js';
 
-const FIRST_LEVEL_ID = 'level1';
 const SPLASH_MIN_TIME = 1500; // ms
 const CODE_LENGTH = 4; // room code: 4 digits
 const SEND_INTERVAL = 1 / CLIENT_SEND_RATE; // s
 const MAX_SNAPSHOTS = 30; // remote states kept for interpolation
+
+// Camera: while playing, the view is zoomed in and follows this phone's character.
+// In the menus the whole level is visible (zoom 1).
+const CAMERA_ZOOM = 1.8; // 1.8 -> about 18 × 10 tiles visible
+const CAMERA_FOLLOW_SPEED = 8; // higher = camera catches up faster
+const CAMERA_ZOOM_SPEED = 3;
 
 // ---------------------------------------------------------------------------
 // DOM
@@ -36,15 +47,20 @@ const splashEl = $('splash');
 const loadingFill = $('loading-fill');
 const loadingText = $('loading-text');
 
-const tapText = $('tap-text');
+const homeEl = $('home');
+const settingsEl = $('settings');
+const levelsEl = $('levels');
+const levelList = $('level-list');
 
 const menuEl = $('menu');
+const menuLevel = $('menu-level');
 const keypadEl = $('keypad');
 const codeBoxes = [...document.querySelectorAll('.code-box')];
 const menuStatus = $('menu-status');
 
 const selectEl = $('select');
 const selectCode = $('select-code');
+const selectLevelEl = $('select-level');
 const selectStatus = $('select-status');
 const selectBack = $('select-back');
 const cards = [...document.querySelectorAll('.card')];
@@ -55,6 +71,16 @@ const messageSub = $('message-sub');
 
 const show = (el) => el.classList.remove('hidden');
 const hide = (el) => el.classList.add('hidden');
+
+// Menu screens: only one is visible at a time.
+const SCREENS = { home: homeEl, settings: settingsEl, levels: levelsEl, menu: menuEl, select: selectEl };
+
+function showScreen(name) {
+  for (const [key, el] of Object.entries(SCREENS)) {
+    if (key === name) show(el);
+    else hide(el);
+  }
+}
 
 function showMessage(text, sub = '') {
   messageText.textContent = text;
@@ -79,8 +105,11 @@ function setSelectStatus(text, isError = false) {
 const input = createInput(controlsEl);
 const socket = io({ autoConnect: false });
 const levels = {}; // levelId -> parsed JSON
+let levelIndex = []; // [{ id, name }] from levels/index.json
+let selectedLevelId = null;
 
-let phase = 'loading'; // loading | menu | lobby | playing | dead | complete
+// loading | home | settings | levels | menu (room code) | lobby (character) | playing | dead | complete
+let phase = 'loading';
 let roomCode = null;
 let myCharacter = null;
 let otherLeft = false; // the other player disconnected (shown on the selection screen)
@@ -91,6 +120,8 @@ let world = { buttons: {}, doors: {} };
 
 let localPlayer = null;
 let remote = null; // { character, snapshots: [{ t, x, y, facing, state, alive }] }
+
+const camera = { x: 0, y: 0, zoom: 1 };
 
 // ---------------------------------------------------------------------------
 // Splash screen with real loading steps
@@ -119,27 +150,26 @@ function connectToServer() {
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// Resolves on the first tap / click / key press on the element.
-function waitForTap(el) {
-  return new Promise((resolve) => {
-    const done = () => {
-      el.removeEventListener('click', done);
-      window.removeEventListener('keydown', done);
-      resolve();
-    };
-    el.addEventListener('click', done);
-    window.addEventListener('keydown', done);
-  });
+async function loadLevelIndex() {
+  const response = await fetch('/levels/index.json');
+  if (!response.ok) throw new Error('Cannot load the level list');
+  return (await response.json()).levels;
 }
 
 async function boot() {
   const startedAt = performance.now();
 
   try {
-    setProgress(0.1, 'Loading level…');
-    useLevel(await loadLevel(FIRST_LEVEL_ID));
+    setProgress(0.1, 'Loading levels…');
+    levelIndex = await loadLevelIndex();
+    for (let i = 0; i < levelIndex.length; i++) {
+      await loadLevel(levelIndex[i].id);
+      setProgress(0.1 + (0.5 * (i + 1)) / levelIndex.length, 'Loading levels…');
+    }
+    selectedLevelId = levelIndex[0].id;
+    useLevel(levels[selectedLevelId]); // shown behind the menus
 
-    setProgress(0.5, 'Connecting to server…');
+    setProgress(0.7, 'Connecting to server…');
     await connectToServer();
 
     setProgress(1, 'Ready');
@@ -153,20 +183,13 @@ async function boot() {
   const elapsed = performance.now() - startedAt;
   if (elapsed < SPLASH_MIN_TIME) await wait(SPLASH_MIN_TIME - elapsed);
 
-  // Browsers allow fullscreen and orientation lock only after a user gesture,
-  // so the splash ends with "Tap to start".
-  hide(document.getElementById('loading-bar'));
-  hide(loadingText);
-  show(tapText);
-  await waitForTap(splashEl);
-  enterFullscreen();
+  buildLevelList();
 
   splashEl.classList.add('fade-out');
   await wait(400);
   hide(splashEl);
 
-  phase = 'menu';
-  show(menuEl);
+  goTo('home');
 }
 
 function useLevel(newLevel) {
@@ -174,6 +197,66 @@ function useLevel(newLevel) {
     level = newLevel;
     renderer = createRenderer(canvas, level);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Navigation: home -> (settings) / levels -> room code -> character selection
+// ---------------------------------------------------------------------------
+
+const MENU_PHASES = new Set(['loading', 'home', 'settings', 'levels', 'menu']);
+
+function goTo(screen) {
+  phase = screen;
+  showScreen(screen);
+}
+
+// "Level 1 · First Steps"
+function levelLabel(levelId) {
+  const i = levelIndex.findIndex((l) => l.id === levelId);
+  return i >= 0 ? `Level ${i + 1} · ${levelIndex[i].name}` : levelId;
+}
+
+$('play-btn').addEventListener('click', () => {
+  // A tap is a user gesture: the browser allows fullscreen here (Android).
+  enterFullscreen();
+  goTo('levels');
+});
+
+$('settings-btn').addEventListener('click', () => goTo('settings'));
+
+// Back buttons with data-back="<screen>"
+for (const button of document.querySelectorAll('[data-back]')) {
+  button.addEventListener('click', () => goTo(button.dataset.back));
+}
+
+// One card per level in levels/index.json, plus a locked "coming soon" card.
+function buildLevelList() {
+  levelList.innerHTML = '';
+
+  levelIndex.forEach((info, i) => {
+    const card = document.createElement('button');
+    card.className = 'level-card';
+    card.innerHTML = `<span class="level-number">${i + 1}</span><span class="level-name"></span>`;
+    card.querySelector('.level-name').textContent = info.name;
+    card.addEventListener('click', () => selectLevel(info.id));
+    levelList.appendChild(card);
+  });
+
+  const locked = document.createElement('button');
+  locked.className = 'level-card locked';
+  locked.disabled = true;
+  locked.innerHTML = '<span class="level-number">?</span><span class="level-name">Coming soon</span>';
+  levelList.appendChild(locked);
+}
+
+function selectLevel(levelId) {
+  selectedLevelId = levelId;
+  useLevel(levels[levelId]); // preview it behind the menu
+  menuLevel.textContent = levelLabel(levelId);
+  typedCode = '';
+  renderCode();
+  setMenuStatus('');
+  goTo('menu');
 }
 
 // ---------------------------------------------------------------------------
@@ -208,7 +291,7 @@ function pressKey(key) {
     }
     roomCode = typedCode;
     setMenuStatus('Joining…');
-    socket.emit('room:join', roomCode);
+    socket.emit('room:join', { code: roomCode, levelId: selectedLevelId });
     // A tap is a user gesture: re-enter fullscreen in case the player left it.
     enterFullscreen();
   }
@@ -237,8 +320,9 @@ renderCode();
 // Tapping the other free card switches character. The game starts when both have chosen.
 // ---------------------------------------------------------------------------
 
-function showSelect(code, me, other) {
+function showSelect(code, levelId, me, other) {
   selectCode.textContent = code;
+  selectLevelEl.textContent = levelLabel(levelId);
 
   for (const card of cards) {
     const character = card.dataset.character;
@@ -260,7 +344,7 @@ function showSelect(code, me, other) {
     setSelectStatus('Starting…');
   }
 
-  show(selectEl);
+  showScreen('select');
 }
 
 for (const card of cards) {
@@ -276,15 +360,13 @@ selectBack.addEventListener('click', () => {
   if (phase !== 'lobby') return;
   socket.emit('room:leave');
 
-  phase = 'menu';
   roomCode = null;
   myCharacter = null;
   otherLeft = false;
   typedCode = '';
   renderCode();
   setMenuStatus('');
-  hide(selectEl);
-  show(menuEl);
+  goTo('menu');
 });
 
 // ---------------------------------------------------------------------------
@@ -300,7 +382,7 @@ socket.on('room:error', ({ message }) => {
   }
 });
 
-socket.on('room:update', ({ code, players }) => {
+socket.on('room:update', ({ code, levelId, players }) => {
   const me = players.find((p) => p.id === socket.id);
   if (!me) return;
   myCharacter = me.character;
@@ -308,11 +390,16 @@ socket.on('room:update', ({ code, players }) => {
   // During the game the character can't change: ignore updates until we're back in the lobby.
   if (phase === 'playing' || phase === 'dead' || phase === 'complete') return;
 
+  // If we joined a room created by the other player, the room's level wins.
+  if (levels[levelId]) {
+    selectedLevelId = levelId;
+    useLevel(levels[levelId]);
+  }
+
   phase = 'lobby';
-  hide(menuEl);
   hide(messageEl);
   hide(controlsEl);
-  showSelect(code, me, players.find((p) => p.id !== socket.id));
+  showSelect(code, levelId, me, players.find((p) => p.id !== socket.id));
 });
 
 socket.on('game:start', async ({ levelId, world: startWorld, players }) => {
@@ -326,8 +413,7 @@ socket.on('game:start', async ({ levelId, world: startWorld, players }) => {
   otherLeft = false;
 
   input.reset();
-  hide(menuEl);
-  hide(selectEl);
+  showScreen(null); // hide every menu screen
   hide(messageEl);
   show(controlsEl);
   phase = 'playing';
@@ -365,18 +451,18 @@ socket.on('player:disconnected', () => {
 });
 
 socket.on('disconnect', () => {
-  if (phase === 'loading' || phase === 'menu') return;
+  if (MENU_PHASES.has(phase)) return;
   hide(controlsEl);
   showMessage('Connection lost', 'Reconnecting…');
 });
 
 // After a reconnection the server sees a new player: join the same room again.
 socket.on('connect', () => {
-  if (roomCode && phase !== 'loading' && phase !== 'menu') {
+  if (roomCode && !MENU_PHASES.has(phase)) {
     phase = 'lobby';
     hide(selectEl);
     showMessage('Reconnected', `Rejoining room ${roomCode}…`);
-    socket.emit('room:join', roomCode);
+    socket.emit('room:join', { code: roomCode, levelId: selectedLevelId });
   }
 });
 
@@ -459,14 +545,58 @@ function loop(now) {
     accumulator -= FIXED_DT;
   }
 
+  resizeCanvas();
+  updateCamera(frameTime);
+
   if (renderer) {
     const players = [];
     if (remote) players.push(remotePlayerForRender(now));
     if (localPlayer) players.push(localPlayer);
-    renderer.draw({ time: now / 1000, players, world });
+    renderer.draw({ time: now / 1000, players, world, camera, localCharacter: myCharacter });
   }
 
   requestAnimationFrame(loop);
+}
+
+// ---------------------------------------------------------------------------
+// Canvas resolution: match the real screen pixels (CSS size × devicePixelRatio),
+// so drawing stays sharp on high-density phone screens, also when zoomed in.
+// ---------------------------------------------------------------------------
+
+function resizeCanvas() {
+  // clientWidth/Height are the layout size, not affected by the CSS rotation.
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  const width = Math.round(canvas.clientWidth * dpr);
+  const height = Math.round(canvas.clientHeight * dpr);
+  if (width > 0 && height > 0 && (canvas.width !== width || canvas.height !== height)) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Camera: smoothly zooms in and follows the local player, without showing outside the level
+// ---------------------------------------------------------------------------
+
+const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+function updateCamera(dt) {
+  const targetZoom = localPlayer ? CAMERA_ZOOM : 1;
+  camera.zoom += (targetZoom - camera.zoom) * Math.min(1, dt * CAMERA_ZOOM_SPEED);
+
+  const viewW = WORLD_WIDTH / camera.zoom;
+  const viewH = WORLD_HEIGHT / camera.zoom;
+
+  // Point to keep in the center: the local player, or the level center in the menus
+  const focusX = localPlayer ? localPlayer.x + PLAYER_WIDTH / 2 : WORLD_WIDTH / 2;
+  const focusY = localPlayer ? localPlayer.y + PLAYER_HEIGHT / 2 : WORLD_HEIGHT / 2;
+
+  const targetX = clamp(focusX - viewW / 2, 0, WORLD_WIDTH - viewW);
+  const targetY = clamp(focusY - viewH / 2, 0, WORLD_HEIGHT - viewH);
+
+  const follow = Math.min(1, dt * CAMERA_FOLLOW_SPEED);
+  camera.x = clamp(camera.x + (targetX - camera.x) * follow, 0, WORLD_WIDTH - viewW);
+  camera.y = clamp(camera.y + (targetY - camera.y) * follow, 0, WORLD_HEIGHT - viewH);
 }
 
 // ---------------------------------------------------------------------------

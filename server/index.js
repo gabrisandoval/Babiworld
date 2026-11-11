@@ -20,10 +20,19 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
 
 const PORT = process.env.PORT || 3000;
-const LEVEL_ID = 'level1';
 const LEVEL_COMPLETE_DELAY = 3000; // ms before restarting after a win (prototype only)
 
-const level = JSON.parse(fs.readFileSync(path.join(ROOT, 'levels', `${LEVEL_ID}.json`), 'utf8'));
+// ---------------------------------------------------------------------------
+// Levels: every level listed in levels/index.json is loaded at startup
+// ---------------------------------------------------------------------------
+
+const readJson = (...parts) => JSON.parse(fs.readFileSync(path.join(ROOT, ...parts), 'utf8'));
+
+const levelIndex = readJson('levels', 'index.json').levels;
+const levels = new Map(levelIndex.map(({ id }) => [id, readJson('levels', `${id}.json`)]));
+const DEFAULT_LEVEL_ID = levelIndex[0].id;
+
+console.log(`Loaded ${levels.size} level(s): ${[...levels.keys()].join(', ')}`);
 
 // ---------------------------------------------------------------------------
 // HTTP: static files
@@ -45,6 +54,7 @@ const io = new Server(server);
  * code -> {
  *   code: string,
  *   players: Map<socketId, { id, character, snapshot }>,
+ *   levelId: string,         // chosen by the player who creates the room
  *   status: 'waiting' | 'playing' | 'dead' | 'complete',
  *   world: { buttons, doors },
  *   timer: Timeout | null
@@ -52,17 +62,20 @@ const io = new Server(server);
  */
 const rooms = new Map();
 
-function createRoom(code) {
+function createRoom(code, levelId) {
   const room = {
     code,
     players: new Map(),
+    levelId,
     status: 'waiting',
-    world: computeWorldState(level, []),
+    world: computeWorldState(levels.get(levelId), []),
     timer: null,
   };
   rooms.set(code, room);
   return room;
 }
+
+const roomLevel = (room) => levels.get(room.levelId);
 
 // Room codes: 3 to 8 letters or digits, case-insensitive.
 function normalizeCode(code) {
@@ -92,6 +105,11 @@ function publicPlayers(room) {
   return [...room.players.values()].map((p) => ({ id: p.id, character: p.character }));
 }
 
+// Room info sent to the clients on every change.
+function roomUpdate(room) {
+  return { code: room.code, levelId: room.levelId, players: publicPlayers(room) };
+}
+
 // Players with a known position, in the shape expected by the shared world logic.
 function activePlayers(room) {
   return [...room.players.values()]
@@ -110,10 +128,10 @@ function clearRoomTimer(room) {
 function startLevel(room) {
   clearRoomTimer(room);
   for (const player of room.players.values()) player.snapshot = null;
-  room.world = computeWorldState(level, []);
+  room.world = computeWorldState(roomLevel(room), []);
   room.status = 'playing';
   io.to(room.code).emit('game:start', {
-    levelId: LEVEL_ID,
+    levelId: room.levelId,
     world: room.world,
     players: publicPlayers(room),
   });
@@ -127,13 +145,13 @@ function handleDeath(room, character) {
 
 function handleLevelComplete(room) {
   room.status = 'complete';
-  io.to(room.code).emit('level:complete', { levelId: LEVEL_ID });
+  io.to(room.code).emit('level:complete', { levelId: room.levelId });
   room.timer = setTimeout(() => startLevel(room), LEVEL_COMPLETE_DELAY);
 }
 
 // Recomputes buttons and doors, and notifies both players only if something changed.
 function updateWorld(room) {
-  const world = computeWorldState(level, activePlayers(room));
+  const world = computeWorldState(roomLevel(room), activePlayers(room));
   if (JSON.stringify(world) !== JSON.stringify(room.world)) {
     room.world = world;
     io.to(room.code).emit('world:update', world);
@@ -163,16 +181,19 @@ function sanitizeSnapshot(data) {
 io.on('connection', (socket) => {
   let room = null;
 
-  socket.on('room:join', (rawCode) => {
+  // Payload: { code, levelId }. The player who creates the room decides the level;
+  // whoever joins an existing room plays the room's level.
+  socket.on('room:join', (data) => {
     if (room) return; // already in a room
 
-    const code = normalizeCode(rawCode);
+    const code = normalizeCode(data?.code);
     if (!code) {
       socket.emit('room:error', { message: 'Room code must be 3-8 letters or digits.' });
       return;
     }
 
-    const target = rooms.get(code) ?? createRoom(code);
+    const levelId = levels.has(data?.levelId) ? data.levelId : DEFAULT_LEVEL_ID;
+    const target = rooms.get(code) ?? createRoom(code, levelId);
     if (target.players.size >= 2) {
       socket.emit('room:error', { message: 'This room is full.' });
       return;
@@ -183,8 +204,8 @@ io.on('connection', (socket) => {
     room.players.set(socket.id, { id: socket.id, character: null, snapshot: null });
     socket.join(code);
 
-    io.to(code).emit('room:update', { code, players: publicPlayers(room) });
-    console.log(`[${code}] player joined (${room.players.size}/2)`);
+    io.to(code).emit('room:update', roomUpdate(room));
+    console.log(`[${code}] player joined (${room.players.size}/2), level ${room.levelId}`);
   });
 
   // Character selection: fire or water, never the same as the other player.
@@ -200,7 +221,7 @@ io.on('connection', (socket) => {
     }
 
     player.character = character;
-    io.to(room.code).emit('room:update', { code: room.code, players: publicPlayers(room) });
+    io.to(room.code).emit('room:update', roomUpdate(room));
     console.log(`[${room.code}] player chose ${character}`);
 
     if (canStart(room)) startLevel(room);
@@ -222,7 +243,7 @@ io.on('connection', (socket) => {
 
     updateWorld(room);
 
-    if (isLevelComplete(level, activePlayers(room))) {
+    if (isLevelComplete(roomLevel(room), activePlayers(room))) {
       handleLevelComplete(room);
     }
   });
@@ -246,7 +267,7 @@ io.on('connection', (socket) => {
 
     left.status = 'waiting';
     io.to(left.code).emit('player:disconnected', { character: player?.character });
-    io.to(left.code).emit('room:update', { code: left.code, players: publicPlayers(left) });
+    io.to(left.code).emit('room:update', roomUpdate(left));
   }
 
   // "Back" button on the selection screen: leave the room and go back to the menu.
