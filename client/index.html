@@ -12,642 +12,13 @@
   <title>Babiworld</title>
 
   <!-- PWA: install on the home screen ("Add to Home Screen") to play fullscreen -->
-  <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
-  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
-
-  <style>
-    :root {
-      --bg: #14121a;
-      --panel: rgba(20, 18, 26, 0.85);
-      --text: #f2eee6;
-      --muted: #a49fae;
-      --fire: #ff5a3c;
-      --water: #3c9dff;
-      --control-bg: rgba(255, 255, 255, 0.18);
-      --control-bg-active: rgba(255, 255, 255, 0.4);
-      --control-border: rgba(255, 255, 255, 0.35);
-    }
-
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
-
-    html,
-    body {
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-      background: var(--bg);
-      color: var(--text);
-      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-      /* No text selection, no long-press menu, no double-tap zoom, no scrolling */
-      user-select: none;
-      -webkit-user-select: none;
-      -webkit-touch-callout: none;
-      -webkit-tap-highlight-color: transparent;
-      touch-action: none;
-      overscroll-behavior: none;
-    }
-
-    .hidden {
-      display: none !important;
-    }
-
-    /* ------------------------------------------------------------------ */
-    /* App container: always landscape                                     */
-    /* If the phone is held in portrait, the whole app is rotated 90° so   */
-    /* the game is still shown in landscape (no "rotate your phone").      */
-    /* ------------------------------------------------------------------ */
-
-    #app {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100vw;
-      height: 100dvh;
-      overflow: hidden;
-
-      /* Width of the control columns on the left and right of the map */
-      --side: 150px;
-      /* Space taken by the notch / status bar / home bar on each side of the game */
-      --inset-l: env(safe-area-inset-left, 0px);
-      --inset-r: env(safe-area-inset-right, 0px);
-    }
-
-    @media (orientation: portrait) {
-      #app {
-        width: 100dvh;
-        height: 100vw;
-        transform-origin: top left;
-        transform: rotate(90deg) translateY(-100%);
-
-        /* Rotated: the phone's top (status bar) is on the game's left,
-           the phone's bottom (home bar) is on the game's right. */
-        --inset-l: env(safe-area-inset-top, 0px);
-        --inset-r: env(safe-area-inset-bottom, 0px);
-      }
-    }
-
-    /* ------------------------------------------------------------------ */
-    /* Game canvas: always 16:9, as large as possible, centered between    */
-    /* the two control columns, so the controls never cover the map        */
-    /* ------------------------------------------------------------------ */
-
-    #game {
-      position: absolute;
-      top: 0;
-      bottom: 0;
-      left: calc(var(--side) + var(--inset-l));
-      right: calc(var(--side) + var(--inset-r));
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      container-type: size; /* lets the canvas size itself with cqw / cqh */
-    }
-
-    #canvas {
-      display: block;
-      width: min(100cqw, calc(100cqh * 16 / 9));
-      height: min(100cqh, calc(100cqw * 9 / 16));
-      background: #1d1a24;
-    }
-
-    /* ------------------------------------------------------------------ */
-    /* Touch controls: in the side columns, outside the map               */
-    /* Left column: left / right arrows. Right column: jump.              */
-    /* ------------------------------------------------------------------ */
-
-    #controls {
-      position: absolute;
-      inset: 0;
-      pointer-events: none; /* only the buttons receive touches */
-    }
-
-    .control {
-      position: absolute;
-      bottom: 24px;
-      width: 64px;
-      height: 64px;
-      border-radius: 50%;
-      border: 2px solid var(--control-border);
-      background: var(--control-bg);
-      color: rgba(255, 255, 255, 0.8);
-      font-size: 30px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      pointer-events: auto;
-      transition: background 0.05s;
-    }
-
-    .control.active {
-      background: var(--control-bg-active);
-    }
-
-    /* Two 64px arrows + 10px gap = 138px, centered in the 150px left column */
-    .control[data-control='left'] {
-      left: calc(var(--inset-l) + 6px);
-    }
-
-    .control[data-control='right'] {
-      left: calc(var(--inset-l) + 80px);
-    }
-
-    /* Jump: 90px, centered in the right column */
-    .control[data-control='jump'] {
-      right: calc(var(--inset-r) + (var(--side) - 90px) / 2);
-      width: 90px;
-      height: 90px;
-      font-size: 34px;
-    }
-
-    #fullscreen-btn {
-      position: absolute;
-      top: 12px;
-      right: calc(var(--inset-r) + (var(--side) - 40px) / 2);
-      width: 40px;
-      height: 40px;
-      border-radius: 10px;
-      border: 1px solid var(--control-border);
-      background: var(--control-bg);
-      color: rgba(255, 255, 255, 0.8);
-      font-size: 20px;
-    }
-
-    /* ------------------------------------------------------------------ */
-    /* Splash screen: background + loading bar, shown at startup           */
-    /* ------------------------------------------------------------------ */
-
-    #splash {
-      position: absolute;
-      inset: 0;
-      z-index: 50;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 24px;
-      /* Placeholder background drawn in CSS: warm light on the left, cold on the right.
-         To use a photo, put it in client/assets/splash.jpg and uncomment the next line. */
-      /* background-image: url('assets/splash.jpg'); */
-      background:
-        radial-gradient(circle at 20% 70%, rgba(255, 90, 60, 0.35), transparent 45%),
-        radial-gradient(circle at 80% 70%, rgba(60, 157, 255, 0.35), transparent 45%),
-        linear-gradient(180deg, #1b1824 0%, #0e0c13 100%);
-      background-size: cover;
-      background-position: center;
-      transition: opacity 0.4s;
-    }
-
-    #splash.fade-out {
-      opacity: 0;
-      pointer-events: none;
-    }
-
-    #splash .title {
-      font-size: 56px;
-    }
-
-    #loading-bar {
-      width: 240px;
-      height: 6px;
-      border-radius: 3px;
-      background: rgba(255, 255, 255, 0.15);
-      overflow: hidden;
-    }
-
-    #loading-fill {
-      width: 0%;
-      height: 100%;
-      border-radius: 3px;
-      background: linear-gradient(90deg, var(--fire), var(--water));
-      transition: width 0.3s;
-    }
-
-    #loading-text {
-      font-size: 13px;
-      color: var(--muted);
-      margin-top: -14px;
-    }
-
-    /* ------------------------------------------------------------------ */
-    /* Menu (room code) and messages                                       */
-    /* ------------------------------------------------------------------ */
-
-    .overlay {
-      position: absolute;
-      inset: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: rgba(10, 9, 14, 0.6);
-    }
-
-    .panel {
-      background: var(--panel);
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      border-radius: 16px;
-      padding: 24px 28px;
-      text-align: center;
-      max-width: 90%;
-    }
-
-    .title {
-      font-size: 32px;
-      font-weight: 700;
-      letter-spacing: 1px;
-      margin-bottom: 4px;
-    }
-
-    .title .fire {
-      color: var(--fire);
-    }
-
-    .title .water {
-      color: var(--water);
-    }
-
-    .subtitle {
-      color: var(--muted);
-      font-size: 14px;
-      margin-bottom: 18px;
-    }
-
-    /* Menu layout for landscape: info on the left, keypad on the right */
-    .menu-layout {
-      display: flex;
-      align-items: center;
-      gap: 32px;
-      text-align: center;
-    }
-
-    .menu-info {
-      width: 260px;
-    }
-
-    /* Room code: 4 boxes, filled with the in-game keypad (no system keyboard) */
-    #code-boxes {
-      display: flex;
-      gap: 8px;
-      justify-content: center;
-    }
-
-    .code-box {
-      width: 46px;
-      height: 54px;
-      border-radius: 10px;
-      border: 1px solid rgba(255, 255, 255, 0.25);
-      background: rgba(255, 255, 255, 0.08);
-      font-size: 28px;
-      font-weight: 700;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .code-box.current {
-      border-color: var(--text);
-    }
-
-    #keypad {
-      display: grid;
-      grid-template-columns: repeat(3, 58px);
-      gap: 8px;
-    }
-
-    .key {
-      height: 46px;
-      border-radius: 10px;
-      border: 1px solid rgba(255, 255, 255, 0.15);
-      background: rgba(255, 255, 255, 0.1);
-      color: var(--text);
-      font-size: 22px;
-      font-weight: 600;
-      touch-action: manipulation;
-    }
-
-    .key:active {
-      background: rgba(255, 255, 255, 0.28);
-    }
-
-    .key-join {
-      background: var(--text);
-      color: var(--bg);
-      font-size: 15px;
-    }
-
-    .key-join:active {
-      background: var(--muted);
-    }
-
-    #menu-status {
-      margin-top: 14px;
-      min-height: 40px;
-      font-size: 14px;
-      color: var(--muted);
-    }
-
-    /* ------------------------------------------------------------------ */
-    /* Character selection                                                 */
-    /* ------------------------------------------------------------------ */
-
-    .select-title {
-      font-size: 22px;
-      font-weight: 700;
-    }
-
-    .select-room {
-      font-size: 13px;
-      color: var(--muted);
-      margin-top: 2px;
-    }
-
-    .cards {
-      display: flex;
-      gap: 20px;
-      justify-content: center;
-      margin: 14px 0 6px;
-    }
-
-    .card {
-      width: 130px;
-      padding: 26px 10px 10px;
-      border-radius: 14px;
-      border: 2px solid rgba(255, 255, 255, 0.15);
-      background: rgba(255, 255, 255, 0.06);
-      color: var(--text);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 8px;
-      touch-action: manipulation;
-      transition: border-color 0.15s, background 0.15s, opacity 0.15s;
-    }
-
-    .card[data-character='fire'].mine {
-      border-color: var(--fire);
-      background: rgba(255, 90, 60, 0.18);
-    }
-
-    .card[data-character='water'].mine {
-      border-color: var(--water);
-      background: rgba(60, 157, 255, 0.18);
-    }
-
-    .card.taken {
-      opacity: 0.35;
-    }
-
-    /* Small character drawn in CSS: body, crest and two eyes */
-    .char {
-      position: relative;
-      width: 44px;
-      height: 56px;
-      border-radius: 16px;
-      display: flex;
-      justify-content: center;
-      gap: 6px;
-      padding-top: 16px;
-    }
-
-    .char::before {
-      content: '';
-      position: absolute;
-      top: -15px;
-      left: 50%;
-      width: 16px;
-      height: 16px;
-      border-radius: 0 50% 50% 50%;
-      transform: translateX(-50%) rotate(45deg);
-      background: var(--crest);
-    }
-
-    .char-fire {
-      background: var(--fire);
-      --crest: #ffb08a;
-    }
-
-    .char-water {
-      background: var(--water);
-      --crest: #a6d4ff;
-    }
-
-    .eye {
-      position: relative;
-      width: 12px;
-      height: 12px;
-      border-radius: 50%;
-      background: #fff;
-    }
-
-    .eye::after {
-      content: '';
-      position: absolute;
-      top: 3px;
-      left: 4px;
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: #1a1a22;
-    }
-
-    .card-name {
-      font-size: 18px;
-      font-weight: 700;
-    }
-
-    .card-tag {
-      font-size: 12px;
-      min-height: 16px;
-      color: var(--muted);
-    }
-
-    .card.mine .card-tag {
-      color: var(--text);
-    }
-
-    #select-status {
-      min-height: 20px;
-      font-size: 14px;
-      color: var(--muted);
-    }
-
-    #select-status.error {
-      color: var(--fire);
-    }
-
-    /* ------------------------------------------------------------------ */
-    /* Back button: top-left corner of any panel with the .has-back class  */
-    /* ------------------------------------------------------------------ */
-
-    .panel.has-back {
-      position: relative;
-      padding-top: 58px;
-    }
-
-    .back-btn {
-      position: absolute;
-      top: 14px;
-      left: 14px;
-      padding: 7px 12px;
-      border-radius: 8px;
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      background: rgba(255, 255, 255, 0.08);
-      color: var(--text);
-      font-size: 14px;
-      touch-action: manipulation;
-    }
-
-    .back-btn:active {
-      background: rgba(255, 255, 255, 0.25);
-    }
-
-    .panel-title {
-      font-size: 22px;
-      font-weight: 700;
-    }
-
-    /* ------------------------------------------------------------------ */
-    /* Home: big title + Play / Settings                                   */
-    /* ------------------------------------------------------------------ */
-
-    #home {
-      flex-direction: column;
-      gap: 28px;
-    }
-
-    #home .title {
-      font-size: 60px;
-      margin: 0;
-      text-shadow: 0 4px 24px rgba(0, 0, 0, 0.6);
-    }
-
-    .home-buttons {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      width: 220px;
-    }
-
-    .menu-btn {
-      padding: 14px 20px;
-      border-radius: 14px;
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      background: rgba(20, 18, 26, 0.85);
-      color: var(--text);
-      font-size: 18px;
-      font-weight: 700;
-      touch-action: manipulation;
-      transition: transform 0.08s;
-    }
-
-    .menu-btn:active {
-      transform: scale(0.96);
-    }
-
-    .menu-btn.primary {
-      border: none;
-      background: linear-gradient(90deg, var(--fire), var(--water));
-      color: #fff;
-      font-size: 22px;
-      padding: 16px 20px;
-    }
-
-    /* ------------------------------------------------------------------ */
-    /* Settings (empty for now: music and sound will go here)              */
-    /* ------------------------------------------------------------------ */
-
-    #settings .panel {
-      min-width: 320px;
-    }
-
-    .placeholder-text {
-      margin-top: 16px;
-      font-size: 14px;
-      color: var(--muted);
-    }
-
-    /* ------------------------------------------------------------------ */
-    /* Level selection                                                     */
-    /* ------------------------------------------------------------------ */
-
-    #level-list {
-      display: flex;
-      gap: 14px;
-      justify-content: center;
-      flex-wrap: wrap;
-      margin-top: 16px;
-    }
-
-    .level-card {
-      width: 120px;
-      height: 120px;
-      border-radius: 14px;
-      border: 2px solid rgba(255, 255, 255, 0.15);
-      background: rgba(255, 255, 255, 0.06);
-      color: var(--text);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      touch-action: manipulation;
-      transition: transform 0.08s;
-    }
-
-    .level-card:active:not(:disabled) {
-      transform: scale(0.96);
-    }
-
-    .level-number {
-      font-size: 36px;
-      font-weight: 700;
-      background: linear-gradient(90deg, var(--fire), var(--water));
-      -webkit-background-clip: text;
-      background-clip: text;
-      color: transparent;
-    }
-
-    .level-name {
-      font-size: 13px;
-      color: var(--muted);
-    }
-
-    .level-card.locked {
-      opacity: 0.4;
-      border-style: dashed;
-    }
-
-    .level-card.locked .level-number {
-      background: none;
-      color: var(--muted);
-    }
-
-    /* Level shown on the code and selection screens */
-    .level-label {
-      font-size: 13px;
-      color: var(--muted);
-      margin-bottom: 12px;
-    }
-
-    #menu-status.error {
-      color: var(--fire);
-    }
-
-    #message-text {
-      font-size: 26px;
-      font-weight: 700;
-    }
-
-    #message-sub {
-      margin-top: 6px;
-      font-size: 14px;
-      color: var(--muted);
-    }
-  </style>
+  <!-- "?v=2": change the number every time you change the icons, so phones download them again -->
+  <link rel="manifest" href="/manifest.webmanifest?v=2" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png?v=2" />
+  <link rel="apple-touch-icon" href="/icons/babiworld.png?v=2" />
+
+  <!-- All styles are in style.css ("?v=1": change it after editing the CSS, to skip the cache) -->
+  <link rel="stylesheet" href="/style.css?v=2" />
 </head>
 
 <body>
@@ -662,16 +33,20 @@
       <button class="control" data-control="left" aria-label="Move left">&#9664;</button>
       <button class="control" data-control="right" aria-label="Move right">&#9654;</button>
       <button class="control" data-control="jump" aria-label="Jump">&#9650;</button>
+      <button id="game-menu-btn" aria-label="Menu">&#9776;</button>
     </div>
 
     <button id="fullscreen-btn" aria-label="Fullscreen">&#x26F6;</button>
 
     <!-- Home: shown after loading -->
     <div id="home" class="overlay hidden">
-      <div class="title"><span class="fire">Babi</span><span class="water">world</span></div>
-      <div class="home-buttons">
-        <button id="play-btn" class="menu-btn primary">Play</button>
-        <button id="settings-btn" class="menu-btn">Settings</button>
+      <!-- Card behind title and buttons, so they stay readable on any background image -->
+      <div class="panel home-card">
+        <div class="title"><span class="brand-a">Babi</span><span class="brand-b">world</span></div>
+        <div class="home-buttons">
+          <button id="play-btn" class="menu-btn primary">Play</button>
+          <button id="settings-btn" class="menu-btn">Settings</button>
+        </div>
       </div>
     </div>
 
@@ -684,22 +59,29 @@
       </div>
     </div>
 
-    <!-- Level selection: filled from levels/index.json -->
+    <!-- Level selection, shared by the two players of the room:
+         one proposes a level, the other confirms it -->
     <div id="levels" class="overlay hidden">
       <div class="panel has-back">
-        <button class="back-btn" data-back="home" aria-label="Back to home">&#8592; Back</button>
+        <button id="levels-back" class="back-btn" aria-label="Leave the room">&#8592; Home</button>
         <div class="panel-title">Choose a level</div>
+        <div class="select-room">Room <span id="levels-code"></span></div>
         <div id="level-list"></div>
+        <div id="proposal" class="hidden">
+          <span id="proposal-text"></span>
+          <button id="proposal-accept" class="menu-btn primary small">Play</button>
+          <button id="proposal-cancel" class="menu-btn small">Cancel</button>
+        </div>
+        <div id="levels-status"></div>
       </div>
     </div>
 
     <!-- Room code: enter a 4-digit code with the in-game keypad -->
     <div id="menu" class="overlay hidden">
       <div class="panel menu-layout has-back">
-        <button class="back-btn" data-back="levels" aria-label="Back to levels">&#8592; Back</button>
+        <button class="back-btn" data-back="home" aria-label="Back to home">&#8592; Back</button>
         <div class="menu-info">
           <div class="panel-title">Room code</div>
-          <div class="level-label" id="menu-level"></div>
           <div class="subtitle">Enter the same code on both phones</div>
           <div id="code-boxes">
             <div class="code-box"></div>
@@ -732,7 +114,7 @@
         <!-- Leave the room and go back to the code keypad (e.g. wrong code) -->
         <button id="select-back" class="back-btn" aria-label="Back to room code">&#8592; Back</button>
         <div class="select-title">Choose your character</div>
-        <div class="select-room">Room <span id="select-code"></span> · <span id="select-level"></span></div>
+        <div class="select-room">Room <span id="select-code"></span></div>
         <div class="cards">
           <button class="card" data-character="fire">
             <div class="char char-fire"><span class="eye"></span><span class="eye"></span></div>
@@ -757,9 +139,37 @@
       </div>
     </div>
 
+    <!-- Level complete: Play again / Next level (both players must choose the same),
+         or Levels (both go back to the level selection, still in the same room) -->
+    <div id="complete" class="overlay hidden">
+      <div class="panel">
+        <div class="complete-title">Level complete!</div>
+        <div class="level-label" id="complete-level"></div>
+        <div class="dialog-buttons">
+          <button id="complete-levels" class="menu-btn">Levels</button>
+          <button id="complete-replay" class="menu-btn">Play again</button>
+          <button id="complete-next" class="menu-btn primary">Next level</button>
+        </div>
+        <div id="complete-status"></div>
+      </div>
+    </div>
+
+    <!-- Confirmation dialog: leave the level (in game) or leave the room (level screen).
+         Texts are set by game.js. The game is online, so it doesn't pause. -->
+    <div id="quit" class="overlay hidden">
+      <div class="panel">
+        <div class="panel-title" id="quit-title">Leave the level?</div>
+        <div class="placeholder-text" id="quit-text">You will both go back to the level selection.</div>
+        <div class="dialog-buttons">
+          <button id="quit-cancel" class="menu-btn">Keep playing</button>
+          <button id="quit-leave" class="menu-btn primary">Leave</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Splash screen with loading bar (hidden by game.js when loading is done) -->
     <div id="splash">
-      <div class="title"><span class="fire">Babi</span><span class="water">world</span></div>
+      <div class="title"><span class="brand-a">Babi</span><span class="brand-b">world</span></div>
       <div id="loading-bar"><div id="loading-fill"></div></div>
       <div id="loading-text">Loading…</div>
     </div>

@@ -3,10 +3,11 @@
 // Flow:
 //   splash (real loading: levels + server connection, min 1.5 s)
 //   -> home (Play / Settings)
-//   -> level selection
-//   -> menu (room code)
-//   -> lobby: character selection (fire / water, never the same), waiting for the other player
-//   -> playing  <-> dead / complete (server restarts the level)
+//   -> menu (room code / PIN, once per session)
+//   -> character selection (fire / water, never the same)
+//   -> level selection, shared: one player proposes, the other confirms
+//   -> playing <-> dead (restart) -> complete (Play again / Next level / Levels)
+// The room lasts until a player goes back to Home.
 
 import {
   CHARACTER,
@@ -18,7 +19,7 @@ import {
   CLIENT_SEND_RATE,
   INTERPOLATION_DELAY,
 } from '/shared/constants.js';
-import { createPlayer, stepPlayer, playerSnapshot } from '/shared/physics.js';
+import { createPlayer, stepPlayer, playerSnapshot, createElevatorState, stepElevators } from '/shared/physics.js';
 import { createInput } from './input.js';
 import { createRenderer } from './render.js';
 
@@ -51,19 +52,35 @@ const homeEl = $('home');
 const settingsEl = $('settings');
 const levelsEl = $('levels');
 const levelList = $('level-list');
+const levelsCode = $('levels-code');
+const levelsStatus = $('levels-status');
+const proposalEl = $('proposal');
+const proposalText = $('proposal-text');
+const proposalAccept = $('proposal-accept');
+const proposalCancel = $('proposal-cancel');
 
 const menuEl = $('menu');
-const menuLevel = $('menu-level');
 const keypadEl = $('keypad');
 const codeBoxes = [...document.querySelectorAll('.code-box')];
 const menuStatus = $('menu-status');
 
 const selectEl = $('select');
 const selectCode = $('select-code');
-const selectLevelEl = $('select-level');
 const selectStatus = $('select-status');
 const selectBack = $('select-back');
 const cards = [...document.querySelectorAll('.card')];
+
+const quitEl = $('quit');
+const quitTitle = $('quit-title');
+const quitText = $('quit-text');
+const quitCancel = $('quit-cancel');
+const quitLeave = $('quit-leave');
+
+const completeEl = $('complete');
+const completeLevel = $('complete-level');
+const completeStatus = $('complete-status');
+const completeReplay = $('complete-replay');
+const completeNext = $('complete-next');
 
 const messageEl = $('message');
 const messageText = $('message-text');
@@ -106,9 +123,9 @@ const input = createInput(controlsEl);
 const socket = io({ autoConnect: false });
 const levels = {}; // levelId -> parsed JSON
 let levelIndex = []; // [{ id, name }] from levels/index.json
-let selectedLevelId = null;
+let sprites = null; // character sprites (null = draw characters with shapes)
 
-// loading | home | settings | levels | menu (room code) | lobby (character) | playing | dead | complete
+// loading | home | settings | menu (room code) | select | levels | playing | dead | complete
 let phase = 'loading';
 let roomCode = null;
 let myCharacter = null;
@@ -116,7 +133,8 @@ let otherLeft = false; // the other player disconnected (shown on the selection 
 
 let level = null;
 let renderer = null;
-let world = { buttons: {}, doors: {} };
+let world = { buttons: {}, doors: {}, elevators: {} };
+let elevatorOffsets = {}; // elevator positions, moved locally (see stepElevators)
 
 let localPlayer = null;
 let remote = null; // { character, snapshots: [{ t, x, y, facing, state, alive }] }
@@ -156,18 +174,70 @@ async function loadLevelIndex() {
   return (await response.json()).levels;
 }
 
+// Loads client/sprites/sprites.json and the character images.
+// If anything is missing, returns null and the characters are drawn with shapes.
+async function loadSprites() {
+  try {
+    const response = await fetch('/sprites/sprites.json');
+    if (!response.ok) return null;
+    const config = await response.json();
+
+    const bySource = {};
+    await Promise.all(
+      [...new Set(Object.values(config.characters))].map(
+        (src) =>
+          new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+              bySource[src] = img;
+              resolve();
+            };
+            img.onerror = () => resolve(); // missing image: fall back to shapes
+            img.src = `/${src}`;
+          }),
+      ),
+    );
+
+    const images = {};
+    for (const [character, src] of Object.entries(config.characters)) {
+      if (bySource[src]) images[character] = bySource[src];
+    }
+    return { ...config, images };
+  } catch (error) {
+    console.warn('Sprites not loaded, using shapes', error);
+    return null;
+  }
+}
+
+// Shows the sprite (front-facing frame) on the character selection cards.
+function applySpritePreviews() {
+  if (!sprites) return;
+  const { frameSize, preview } = sprites;
+  for (const card of cards) {
+    const src = sprites.characters[card.dataset.character];
+    if (!sprites.images[card.dataset.character]) continue;
+    const el = card.querySelector('.char');
+    el.classList.add('has-sprite');
+    el.style.backgroundImage = `url('/${src}')`;
+    el.style.backgroundPosition = `-${preview.frame * frameSize}px -${preview.row * frameSize}px`;
+  }
+}
+
 async function boot() {
   const startedAt = performance.now();
 
   try {
-    setProgress(0.1, 'Loading levels…');
+    setProgress(0.05, 'Loading characters…');
+    sprites = await loadSprites();
+    applySpritePreviews();
+
+    setProgress(0.25, 'Loading levels…');
     levelIndex = await loadLevelIndex();
     for (let i = 0; i < levelIndex.length; i++) {
       await loadLevel(levelIndex[i].id);
-      setProgress(0.1 + (0.5 * (i + 1)) / levelIndex.length, 'Loading levels…');
+      setProgress(0.25 + (0.4 * (i + 1)) / levelIndex.length, 'Loading levels…');
     }
-    selectedLevelId = levelIndex[0].id;
-    useLevel(levels[selectedLevelId]); // shown behind the menus
+    useLevel(levels[levelIndex[0].id]); // shown behind the menus
 
     setProgress(0.7, 'Connecting to server…');
     await connectToServer();
@@ -183,31 +253,58 @@ async function boot() {
   const elapsed = performance.now() - startedAt;
   if (elapsed < SPLASH_MIN_TIME) await wait(SPLASH_MIN_TIME - elapsed);
 
-  buildLevelList();
-
+  // Show the home screen first, underneath the splash, then fade the splash out:
+  // this way there is never a moment with no background.
+  goTo('home');
   splashEl.classList.add('fade-out');
   await wait(400);
   hide(splashEl);
-
-  goTo('home');
 }
 
 function useLevel(newLevel) {
   if (level !== newLevel) {
     level = newLevel;
-    renderer = createRenderer(canvas, level);
+    renderer = createRenderer(canvas, level, sprites);
   }
 }
 
 // ---------------------------------------------------------------------------
-// Navigation: home -> (settings) / levels -> room code -> character selection
+// Navigation
+//   Home -> Play -> room code (PIN) -> character selection -> level selection -> game
+// The room lasts for the whole session: after a level both players go back to the
+// level selection together. "Home" on the level screen leaves the room.
 // ---------------------------------------------------------------------------
 
-const MENU_PHASES = new Set(['loading', 'home', 'settings', 'levels', 'menu']);
+const MENU_PHASES = new Set(['loading', 'home', 'settings', 'menu']);
+const GAME_PHASES = new Set(['playing', 'dead', 'complete']);
 
 function goTo(screen) {
   phase = screen;
   showScreen(screen);
+}
+
+// ---------------------------------------------------------------------------
+// Progress: completed levels are saved on this phone (used later for the story Skip)
+// ---------------------------------------------------------------------------
+
+const PROGRESS_KEY = 'babiworld.completedLevels';
+
+function completedLevels() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(PROGRESS_KEY) ?? '[]'));
+  } catch {
+    return new Set();
+  }
+}
+
+function markCompleted(levelId) {
+  try {
+    const done = completedLevels();
+    done.add(levelId);
+    localStorage.setItem(PROGRESS_KEY, JSON.stringify([...done]));
+  } catch {
+    // storage not available (e.g. private mode): progress just isn't saved
+  }
 }
 
 // "Level 1 · First Steps"
@@ -219,7 +316,10 @@ function levelLabel(levelId) {
 $('play-btn').addEventListener('click', () => {
   // A tap is a user gesture: the browser allows fullscreen here (Android).
   enterFullscreen();
-  goTo('levels');
+  typedCode = '';
+  renderCode();
+  setMenuStatus('');
+  goTo('menu');
 });
 
 $('settings-btn').addEventListener('click', () => goTo('settings'));
@@ -229,42 +329,11 @@ for (const button of document.querySelectorAll('[data-back]')) {
   button.addEventListener('click', () => goTo(button.dataset.back));
 }
 
-// One card per level in levels/index.json, plus a locked "coming soon" card.
-function buildLevelList() {
-  levelList.innerHTML = '';
-
-  levelIndex.forEach((info, i) => {
-    const card = document.createElement('button');
-    card.className = 'level-card';
-    card.innerHTML = `<span class="level-number">${i + 1}</span><span class="level-name"></span>`;
-    card.querySelector('.level-name').textContent = info.name;
-    card.addEventListener('click', () => selectLevel(info.id));
-    levelList.appendChild(card);
-  });
-
-  const locked = document.createElement('button');
-  locked.className = 'level-card locked';
-  locked.disabled = true;
-  locked.innerHTML = '<span class="level-number">?</span><span class="level-name">Coming soon</span>';
-  levelList.appendChild(locked);
-}
-
-function selectLevel(levelId) {
-  selectedLevelId = levelId;
-  useLevel(levels[levelId]); // preview it behind the menu
-  menuLevel.textContent = levelLabel(levelId);
-  typedCode = '';
-  renderCode();
-  setMenuStatus('');
-  goTo('menu');
-}
-
 // ---------------------------------------------------------------------------
-// Menu
-// ---------------------------------------------------------------------------
-
-// The room code is typed with the in-game keypad, never with the system keyboard:
+// Room code (PIN)
+// The code is typed with the in-game keypad, never with the system keyboard:
 // the system keyboard follows the real phone orientation, the keypad follows the game.
+// ---------------------------------------------------------------------------
 
 let typedCode = '';
 
@@ -291,7 +360,7 @@ function pressKey(key) {
     }
     roomCode = typedCode;
     setMenuStatus('Joining…');
-    socket.emit('room:join', { code: roomCode, levelId: selectedLevelId });
+    socket.emit('room:join', { code: roomCode });
     // A tap is a user gesture: re-enter fullscreen in case the player left it.
     enterFullscreen();
   }
@@ -315,63 +384,254 @@ window.addEventListener('keydown', (event) => {
 renderCode();
 
 // ---------------------------------------------------------------------------
-// Character selection (lobby)
-// Each player taps Fire or Water. A character taken by the other player is disabled.
-// Tapping the other free card switches character. The game starts when both have chosen.
+// Room state from the server
+// room:update = { code, status: 'select' | 'levels' | 'playing' | 'dead' | 'complete',
+//                 levelId, proposal: { levelId, by } | null, players: [{ id, character }] }
 // ---------------------------------------------------------------------------
 
-function showSelect(code, levelId, me, other) {
-  selectCode.textContent = code;
-  selectLevelEl.textContent = levelLabel(levelId);
+let room = null; // last room:update
+
+function me() {
+  return room?.players.find((p) => p.id === socket.id);
+}
+
+function other() {
+  return room?.players.find((p) => p.id !== socket.id);
+}
+
+// Leaves the game view (controls, overlays, players) and goes back to a lobby screen.
+function exitGameView() {
+  localPlayer = null; // the camera zooms back out to the whole level
+  remote = null;
+  world = { buttons: {}, doors: {}, elevators: {} };
+  elevatorOffsets = {};
+  input.reset();
+  hide(controlsEl);
+  hide(quitEl);
+  hide(completeEl);
+  hide(messageEl);
+}
+
+// Shows the right lobby screen for the current room status.
+function showLobby() {
+  if (!room) return;
+  if (room.status === 'levels') {
+    phase = 'levels';
+    renderLevels();
+    showScreen('levels');
+  } else {
+    phase = 'select';
+    renderSelect();
+    showScreen('select');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Character selection
+// Each player taps Fire or Water. A character taken by the other player is disabled.
+// Tapping the other free card switches character. When both have chosen, the room
+// moves on to the level selection.
+// ---------------------------------------------------------------------------
+
+function renderSelect() {
+  const mine = me();
+  const theirs = other();
+  selectCode.textContent = room.code;
 
   for (const card of cards) {
     const character = card.dataset.character;
-    const mine = me.character === character;
-    const taken = other?.character === character;
-    card.classList.toggle('mine', mine);
+    const isMine = mine?.character === character;
+    const taken = theirs?.character === character;
+    card.classList.toggle('mine', isMine);
     card.classList.toggle('taken', taken);
     card.disabled = taken;
-    card.querySelector('.card-tag').textContent = mine ? 'You' : taken ? 'Other player' : '';
+    card.querySelector('.card-tag').textContent = isMine ? 'You' : taken ? 'Other player' : '';
   }
 
-  if (!other) {
+  if (!theirs) {
     setSelectStatus(otherLeft ? 'The other player left. Waiting for someone to join…' : 'Waiting for the other player to join…');
-  } else if (!me.character) {
+  } else if (!mine?.character) {
     setSelectStatus('Choose Fire or Water');
-  } else if (!other.character) {
-    setSelectStatus('Waiting for the other player to choose…');
   } else {
-    setSelectStatus('Starting…');
+    setSelectStatus('Waiting for the other player to choose…');
   }
-
-  showScreen('select');
 }
 
 for (const card of cards) {
   card.addEventListener('click', () => {
-    if (phase !== 'lobby' || card.disabled) return;
-    const character = card.dataset.character;
-    if (character !== myCharacter) socket.emit('player:choose', character);
+    if (phase !== 'select' || card.disabled) return;
+    if (card.dataset.character !== me()?.character) socket.emit('player:choose', card.dataset.character);
   });
 }
 
-// "Back": leave the room and return to the keypad with an empty code.
+// "Back" on the character screen: leave the room and return to the keypad (e.g. wrong code).
 selectBack.addEventListener('click', () => {
-  if (phase !== 'lobby') return;
-  socket.emit('room:leave');
-
-  roomCode = null;
-  myCharacter = null;
-  otherLeft = false;
+  if (phase !== 'select') return;
+  leaveRoom();
   typedCode = '';
   renderCode();
   setMenuStatus('');
   goTo('menu');
 });
 
+function leaveRoom() {
+  socket.emit('room:leave');
+  room = null;
+  roomCode = null;
+  myCharacter = null;
+  otherLeft = false;
+}
+
+// ---------------------------------------------------------------------------
+// Level selection (shared by both players)
+// Tapping a level proposes it; the other player confirms with "Play"
+// (or by tapping the same level). Tapping another level changes the proposal.
+// ---------------------------------------------------------------------------
+
+function renderLevels() {
+  levelsCode.textContent = room.code;
+  const done = completedLevels();
+  const proposal = room.proposal;
+  const mineProposal = proposal?.by === socket.id;
+
+  levelList.innerHTML = '';
+  levelIndex.forEach((info, i) => {
+    const card = document.createElement('button');
+    card.className = 'level-card';
+    card.innerHTML = `<span class="level-number">${i + 1}</span><span class="level-name"></span>`;
+    card.querySelector('.level-name').textContent = info.name;
+    if (done.has(info.id)) card.insertAdjacentHTML('beforeend', '<span class="level-done" aria-label="Completed">&#10003;</span>');
+    if (proposal?.levelId === info.id) card.classList.add(mineProposal ? 'proposed' : 'proposed-other');
+    card.addEventListener('click', () => {
+      if (phase === 'levels') socket.emit('level:propose', info.id);
+    });
+    levelList.appendChild(card);
+  });
+
+  const locked = document.createElement('button');
+  locked.className = 'level-card locked';
+  locked.disabled = true;
+  locked.innerHTML = '<span class="level-number">?</span><span class="level-name">Coming soon</span>';
+  levelList.appendChild(locked);
+
+  // Proposal banner
+  if (!proposal) {
+    hide(proposalEl);
+    levelsStatus.textContent = otherQuit ? 'The other player went back to the level selection' : 'Tap a level to propose it to the other player';
+  } else if (mineProposal) {
+    proposalText.textContent = `You proposed ${levelLabel(proposal.levelId)}`;
+    hide(proposalAccept);
+    show(proposalCancel);
+    show(proposalEl);
+    levelsStatus.textContent = 'Waiting for the other player to confirm…';
+  } else {
+    proposalText.textContent = `The other player proposes ${levelLabel(proposal.levelId)}`;
+    show(proposalAccept);
+    hide(proposalCancel);
+    show(proposalEl);
+    levelsStatus.textContent = 'Tap Play to start, or choose another level';
+  }
+
+  // Preview the proposed level behind the menu
+  if (proposal && levels[proposal.levelId]) useLevel(levels[proposal.levelId]);
+}
+
+proposalAccept.addEventListener('click', () => {
+  if (phase === 'levels') socket.emit('level:accept');
+});
+
+proposalCancel.addEventListener('click', () => {
+  if (phase === 'levels') socket.emit('level:cancel');
+});
+
+// "Home" on the level screen: leave the room (with confirmation, the other player stays alone).
+$('levels-back').addEventListener('click', () => {
+  if (phase !== 'levels') return;
+  openConfirm('home');
+});
+
+// ---------------------------------------------------------------------------
+// Confirmation dialog
+//   'level': leave the current level (both players go back to the level selection)
+//   'home':  leave the room (from the level selection)
+// ---------------------------------------------------------------------------
+
+let confirmAction = null;
+
+function openConfirm(action) {
+  confirmAction = action;
+  if (action === 'level') {
+    quitTitle.textContent = 'Leave the level?';
+    quitText.textContent = 'You will both go back to the level selection.';
+    quitCancel.textContent = 'Keep playing';
+    quitLeave.textContent = 'Leave';
+  } else {
+    quitTitle.textContent = 'Leave the room?';
+    quitText.textContent = 'The other player will wait in the room for someone to join.';
+    quitCancel.textContent = 'Stay';
+    quitLeave.textContent = 'Leave';
+  }
+  input.reset(); // release any held button
+  show(quitEl);
+}
+
+quitCancel.addEventListener('click', () => hide(quitEl));
+
+quitLeave.addEventListener('click', () => {
+  hide(quitEl);
+  if (confirmAction === 'level') {
+    socket.emit('level:quit'); // the server sends room:update: both go back to the levels
+  } else if (confirmAction === 'home') {
+    leaveRoom();
+    goTo('home');
+  }
+});
+
+// In-game menu button
+$('game-menu-btn').addEventListener('click', () => {
+  if (GAME_PHASES.has(phase)) openConfirm('level');
+});
+
+// ---------------------------------------------------------------------------
+// Level complete: Play again / Next level need both players; Levels goes back for both
+// ---------------------------------------------------------------------------
+
+function showVotes(votes = {}) {
+  const mine = votes[socket.id];
+  const theirs = Object.entries(votes).find(([id]) => id !== socket.id)?.[1];
+  const names = { replay: 'play again', next: 'go to the next level' };
+
+  completeReplay.disabled = mine === 'replay';
+  completeNext.disabled = mine === 'next';
+
+  if (mine && theirs && mine !== theirs) {
+    completeStatus.textContent = `The other player wants to ${names[theirs]}`;
+  } else if (mine) {
+    completeStatus.textContent = 'Waiting for the other player…';
+  } else if (theirs) {
+    completeStatus.textContent = `The other player wants to ${names[theirs]}`;
+  } else {
+    completeStatus.textContent = '';
+  }
+}
+
+completeReplay.addEventListener('click', () => {
+  if (phase === 'complete') socket.emit('level:vote', 'replay');
+});
+
+completeNext.addEventListener('click', () => {
+  if (phase === 'complete') socket.emit('level:vote', 'next');
+});
+
+$('complete-levels').addEventListener('click', () => {
+  if (phase === 'complete') socket.emit('level:quit');
+});
+
 // ---------------------------------------------------------------------------
 // Socket events
 // ---------------------------------------------------------------------------
+
+let otherQuit = false; // the other player left the last level (shown on the level screen)
 
 socket.on('room:error', ({ message }) => {
   if (phase === 'menu') {
@@ -382,24 +642,22 @@ socket.on('room:error', ({ message }) => {
   }
 });
 
-socket.on('room:update', ({ code, levelId, players }) => {
-  const me = players.find((p) => p.id === socket.id);
-  if (!me) return;
-  myCharacter = me.character;
+socket.on('room:update', (update) => {
+  room = update;
+  if (!me()) return;
+  myCharacter = me().character;
 
-  // During the game the character can't change: ignore updates until we're back in the lobby.
-  if (phase === 'playing' || phase === 'dead' || phase === 'complete') return;
+  // While playing, the game events (game:start, level:complete…) drive the screen.
+  if (GAME_PHASES.has(update.status)) return;
 
-  // If we joined a room created by the other player, the room's level wins.
-  if (levels[levelId]) {
-    selectedLevelId = levelId;
-    useLevel(levels[levelId]);
-  }
-
-  phase = 'lobby';
+  // Back to a lobby screen (after joining, a level quit, or the other player leaving).
+  if (GAME_PHASES.has(phase)) exitGameView();
   hide(messageEl);
-  hide(controlsEl);
-  showSelect(code, levelId, me, players.find((p) => p.id !== socket.id));
+  showLobby();
+});
+
+socket.on('level:quit', () => {
+  otherQuit = true; // shown on the level screen until the next proposal
 });
 
 socket.on('game:start', async ({ levelId, world: startWorld, players }) => {
@@ -410,10 +668,14 @@ socket.on('game:start', async ({ levelId, world: startWorld, players }) => {
   localPlayer = createPlayer(myCharacter, level);
   remote = { character: otherCharacter, snapshots: [] };
   world = startWorld;
+  elevatorOffsets = createElevatorState(level);
   otherLeft = false;
+  otherQuit = false;
 
   input.reset();
   showScreen(null); // hide every menu screen
+  hide(quitEl);
+  hide(completeEl);
   hide(messageEl);
   show(controlsEl);
   phase = 'playing';
@@ -435,19 +697,27 @@ socket.on('player:died', ({ character }) => {
   showMessage(who, 'Restarting…');
 });
 
-socket.on('level:complete', () => {
+socket.on('level:complete', ({ levelId, nextLevelId }) => {
   phase = 'complete';
-  showMessage('Level complete!', 'Well done, both of you');
+  markCompleted(levelId);
+
+  input.reset();
+  hide(controlsEl);
+  hide(quitEl);
+  hide(messageEl);
+  completeLevel.textContent = levelLabel(levelId);
+  completeNext.classList.toggle('hidden', !nextLevelId); // last level: no "Next level"
+  showVotes({});
+  show(completeEl);
 });
 
-// The server follows this with a room:update, which brings back the selection screen.
+socket.on('level:votes', (votes) => {
+  if (phase === 'complete') showVotes(votes);
+});
+
+// The server follows this with a room:update, which brings back the character screen.
 socket.on('player:disconnected', () => {
-  phase = 'lobby';
   otherLeft = true;
-  localPlayer = null;
-  remote = null;
-  hide(controlsEl);
-  hide(messageEl);
 });
 
 socket.on('disconnect', () => {
@@ -459,10 +729,11 @@ socket.on('disconnect', () => {
 // After a reconnection the server sees a new player: join the same room again.
 socket.on('connect', () => {
   if (roomCode && !MENU_PHASES.has(phase)) {
-    phase = 'lobby';
-    hide(selectEl);
+    exitGameView();
+    showScreen(null);
     showMessage('Reconnected', `Rejoining room ${roomCode}…`);
-    socket.emit('room:join', { code: roomCode, levelId: selectedLevelId });
+    phase = 'select';
+    socket.emit('room:join', { code: roomCode });
   }
 });
 
@@ -520,7 +791,9 @@ function sendState() {
 function update(dt) {
   if (phase !== 'playing' || !localPlayer) return;
 
-  const { died } = stepPlayer(localPlayer, input.state, level, world.doors);
+  // Elevators move towards their target (top while their button is pressed), then the player
+  const elevatorMoves = stepElevators(level, world.elevators ?? {}, elevatorOffsets, dt);
+  const { died } = stepPlayer(localPlayer, input.state, level, world.doors, dt, elevatorMoves);
   if (died) {
     sendState(); // tell the server immediately
     phase = 'dead';
@@ -552,7 +825,7 @@ function loop(now) {
     const players = [];
     if (remote) players.push(remotePlayerForRender(now));
     if (localPlayer) players.push(localPlayer);
-    renderer.draw({ time: now / 1000, players, world, camera, localCharacter: myCharacter });
+    renderer.draw({ time: now / 1000, players, world, camera, localCharacter: myCharacter, elevatorOffsets });
   }
 
   requestAnimationFrame(loop);

@@ -1,0 +1,21 @@
+{
+  "type": "tileset",
+  "version": "1.10",
+  "tiledversion": "1.11.0",
+  "name": "babiworld-tiles",
+  "tilewidth": 30,
+  "tileheight": 30,
+  "tilecount": 4,
+  "columns": 4,
+  "margin": 0,
+  "spacing": 0,
+  "image": "babiworld-tiles.png",
+  "imagewidth": 120,
+  "imageheight": 30,
+  "tiles": [
+    { "id": 0, "properties": [{ "name": "type", "type": "string", "value": "wall" }] },
+    { "id": 1, "properties": [{ "name": "type", "type": "string", "value": "lava" }] },
+    { "id": 2, "properties": [{ "name": "type", "type": "string", "value": "water" }] },
+    { "id": 3, "properties": [{ "name": "type", "type": "string", "value": "poison" }] }
+  ]
+}
