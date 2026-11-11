@@ -350,6 +350,157 @@
       color: var(--muted);
     }
 
+    /* ------------------------------------------------------------------ */
+    /* Character selection                                                 */
+    /* ------------------------------------------------------------------ */
+
+    #select .panel {
+      position: relative;
+    }
+
+    .select-title {
+      font-size: 22px;
+      font-weight: 700;
+      padding: 0 72px; /* room for the Back button */
+    }
+
+    #select-back {
+      position: absolute;
+      top: 14px;
+      left: 14px;
+      padding: 7px 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text);
+      font-size: 14px;
+      touch-action: manipulation;
+    }
+
+    #select-back:active {
+      background: rgba(255, 255, 255, 0.25);
+    }
+
+    .select-room {
+      font-size: 13px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    .cards {
+      display: flex;
+      gap: 20px;
+      justify-content: center;
+      margin: 14px 0 6px;
+    }
+
+    .card {
+      width: 130px;
+      padding: 26px 10px 10px;
+      border-radius: 14px;
+      border: 2px solid rgba(255, 255, 255, 0.15);
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      touch-action: manipulation;
+      transition: border-color 0.15s, background 0.15s, opacity 0.15s;
+    }
+
+    .card[data-character='fire'].mine {
+      border-color: var(--fire);
+      background: rgba(255, 90, 60, 0.18);
+    }
+
+    .card[data-character='water'].mine {
+      border-color: var(--water);
+      background: rgba(60, 157, 255, 0.18);
+    }
+
+    .card.taken {
+      opacity: 0.35;
+    }
+
+    /* Small character drawn in CSS: body, crest and two eyes */
+    .char {
+      position: relative;
+      width: 44px;
+      height: 56px;
+      border-radius: 16px;
+      display: flex;
+      justify-content: center;
+      gap: 6px;
+      padding-top: 16px;
+    }
+
+    .char::before {
+      content: '';
+      position: absolute;
+      top: -15px;
+      left: 50%;
+      width: 16px;
+      height: 16px;
+      border-radius: 0 50% 50% 50%;
+      transform: translateX(-50%) rotate(45deg);
+      background: var(--crest);
+    }
+
+    .char-fire {
+      background: var(--fire);
+      --crest: #ffb08a;
+    }
+
+    .char-water {
+      background: var(--water);
+      --crest: #a6d4ff;
+    }
+
+    .eye {
+      position: relative;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #fff;
+    }
+
+    .eye::after {
+      content: '';
+      position: absolute;
+      top: 3px;
+      left: 4px;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #1a1a22;
+    }
+
+    .card-name {
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .card-tag {
+      font-size: 12px;
+      min-height: 16px;
+      color: var(--muted);
+    }
+
+    .card.mine .card-tag {
+      color: var(--text);
+    }
+
+    #select-status {
+      min-height: 20px;
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    #select-status.error {
+      color: var(--fire);
+    }
+
     /* "Tap to start" on the splash screen, shown when loading is done */
     #tap-text {
       font-size: 16px;
@@ -428,6 +579,29 @@
           <button class="key" data-key="0">0</button>
           <button class="key key-join" data-key="join">Join</button>
         </div>
+      </div>
+    </div>
+
+    <!-- Character selection: fire or water, the two players can't pick the same one -->
+    <div id="select" class="overlay hidden">
+      <div class="panel">
+        <!-- Leave the room and go back to the code keypad (e.g. wrong code) -->
+        <button id="select-back" aria-label="Back to room code">&#8592; Back</button>
+        <div class="select-title">Choose your character</div>
+        <div class="select-room">Room <span id="select-code"></span></div>
+        <div class="cards">
+          <button class="card" data-character="fire">
+            <div class="char char-fire"><span class="eye"></span><span class="eye"></span></div>
+            <div class="card-name">Fire</div>
+            <div class="card-tag"></div>
+          </button>
+          <button class="card" data-character="water">
+            <div class="char char-water"><span class="eye"></span><span class="eye"></span></div>
+            <div class="card-name">Water</div>
+            <div class="card-tag"></div>
+          </button>
+        </div>
+        <div id="select-status"></div>
       </div>
     </div>
 

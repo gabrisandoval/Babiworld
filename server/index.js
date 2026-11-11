@@ -71,10 +71,21 @@ function normalizeCode(code) {
   return /^[A-Z0-9]{3,8}$/.test(clean) ? clean : null;
 }
 
-// First player gets fire, second gets water (or whichever is free after a disconnect).
-function freeCharacter(room) {
-  const taken = new Set([...room.players.values()].map((p) => p.character));
-  return [CHARACTER.FIRE, CHARACTER.WATER].find((c) => !taken.has(c)) ?? null;
+const VALID_CHARACTERS = new Set(Object.values(CHARACTER));
+
+// True if another player in the room already chose this character.
+function isTaken(room, character, exceptId) {
+  return [...room.players.values()].some((p) => p.id !== exceptId && p.character === character);
+}
+
+// The game starts when there are 2 players and both chose a (different) character.
+function canStart(room) {
+  const players = [...room.players.values()];
+  return (
+    players.length === 2 &&
+    players.every((p) => p.character) &&
+    players[0].character !== players[1].character
+  );
 }
 
 function publicPlayers(room) {
@@ -162,20 +173,37 @@ io.on('connection', (socket) => {
     }
 
     const target = rooms.get(code) ?? createRoom(code);
-    const character = freeCharacter(target);
-    if (!character) {
+    if (target.players.size >= 2) {
       socket.emit('room:error', { message: 'This room is full.' });
       return;
     }
 
+    // The character is chosen afterwards, on the selection screen.
     room = target;
-    room.players.set(socket.id, { id: socket.id, character, snapshot: null });
+    room.players.set(socket.id, { id: socket.id, character: null, snapshot: null });
     socket.join(code);
 
     io.to(code).emit('room:update', { code, players: publicPlayers(room) });
-    console.log(`[${code}] ${character} joined (${room.players.size}/2)`);
+    console.log(`[${code}] player joined (${room.players.size}/2)`);
+  });
 
-    if (room.players.size === 2) startLevel(room);
+  // Character selection: fire or water, never the same as the other player.
+  // Choosing again switches character (if the other one is free).
+  socket.on('player:choose', (character) => {
+    if (!room || room.status !== 'waiting') return;
+    const player = room.players.get(socket.id);
+    if (!player || !VALID_CHARACTERS.has(character)) return;
+
+    if (isTaken(room, character, socket.id)) {
+      socket.emit('room:error', { message: 'The other player already chose this character.' });
+      return;
+    }
+
+    player.character = character;
+    io.to(room.code).emit('room:update', { code: room.code, players: publicPlayers(room) });
+    console.log(`[${room.code}] player chose ${character}`);
+
+    if (canStart(room)) startLevel(room);
   });
 
   socket.on('player:state', (data) => {
@@ -199,23 +227,32 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('disconnect', () => {
+  // Removes this player from its room (used by "Back" and by disconnection).
+  function leaveRoom() {
     if (!room) return;
-    const player = room.players.get(socket.id);
-    room.players.delete(socket.id);
-    clearRoomTimer(room);
+    const left = room;
+    const player = left.players.get(socket.id);
+    left.players.delete(socket.id);
+    socket.leave(left.code);
+    clearRoomTimer(left);
+    room = null;
 
-    console.log(`[${room.code}] ${player?.character} left`);
+    console.log(`[${left.code}] ${player?.character ?? 'player'} left`);
 
-    if (room.players.size === 0) {
-      rooms.delete(room.code);
+    if (left.players.size === 0) {
+      rooms.delete(left.code);
       return;
     }
 
-    room.status = 'waiting';
-    io.to(room.code).emit('player:disconnected', { character: player?.character });
-    io.to(room.code).emit('room:update', { code: room.code, players: publicPlayers(room) });
-  });
+    left.status = 'waiting';
+    io.to(left.code).emit('player:disconnected', { character: player?.character });
+    io.to(left.code).emit('room:update', { code: left.code, players: publicPlayers(left) });
+  }
+
+  // "Back" button on the selection screen: leave the room and go back to the menu.
+  socket.on('room:leave', leaveRoom);
+
+  socket.on('disconnect', leaveRoom);
 });
 
 // ---------------------------------------------------------------------------
