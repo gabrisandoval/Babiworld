@@ -3,11 +3,17 @@
 //
 // Usage:
 //   const renderer = createRenderer(canvas, level);
-//   renderer.draw({ time, players, world });   // once per frame
+//   renderer.draw({ time, players, world, camera, localCharacter });   // once per frame
 //
-//   time    -> seconds since start (drives animations)
-//   players -> [{ character, x, y, facing, state, alive }]
-//   world   -> { buttons: { id: pressed }, doors: { id: open } }
+//   time           -> seconds since start (drives animations)
+//   players        -> [{ character, x, y, facing, state, alive }]
+//   world          -> { buttons: { id: pressed }, doors: { id: open } }
+//   camera         -> { x, y, zoom }: top-left corner of the visible area (world px) and zoom
+//                     (zoom 1 = whole level visible)
+//   localCharacter -> this phone's character: an arrow points to the OTHER player when off-screen
+//
+// The canvas can have any pixel size (e.g. screen size × devicePixelRatio for sharp drawing):
+// everything is drawn in world coordinates and scaled to fit.
 
 import {
   WORLD_WIDTH,
@@ -105,14 +111,19 @@ const isSolid = (tile) => tile !== TILE.EMPTY;
 // Renderer
 // ---------------------------------------------------------------------------
 
+// The static layer is drawn at a higher resolution, so it stays sharp when zoomed in.
+const STATIC_SCALE = 3;
+
 export function createRenderer(canvas, level) {
   const ctx = canvas.getContext('2d');
 
   // Static layer (background + walls) is drawn once into an offscreen canvas.
   const staticLayer = document.createElement('canvas');
-  staticLayer.width = WORLD_WIDTH;
-  staticLayer.height = WORLD_HEIGHT;
-  drawStaticLayer(staticLayer.getContext('2d'), level);
+  staticLayer.width = WORLD_WIDTH * STATIC_SCALE;
+  staticLayer.height = WORLD_HEIGHT * STATIC_SCALE;
+  const staticCtx = staticLayer.getContext('2d');
+  staticCtx.scale(STATIC_SCALE, STATIC_SCALE);
+  drawStaticLayer(staticCtx, level);
 
   // Door openness: 0 = closed, 1 = open. Animated towards the server state.
   const doorOpenness = {};
@@ -120,21 +131,113 @@ export function createRenderer(canvas, level) {
 
   let lastTime = null;
 
-  function draw({ time, players = [], world = { buttons: {}, doors: {} } }) {
+  function draw({
+    time,
+    players = [],
+    world = { buttons: {}, doors: {} },
+    camera = { x: 0, y: 0, zoom: 1 },
+    localCharacter = null,
+  }) {
     const dt = lastTime === null ? 0 : Math.min(time - lastTime, 0.1);
     lastTime = time;
 
-    ctx.drawImage(staticLayer, 0, 0);
+    // Canvas pixels per world pixel: the visible area (WORLD_WIDTH / zoom) fills the canvas width.
+    const scale = (canvas.width * camera.zoom) / WORLD_WIDTH;
 
+    // Clear in screen space
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = COLORS.background;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // World space: everything below is drawn in world coordinates
+    ctx.setTransform(scale, 0, 0, scale, -camera.x * scale, -camera.y * scale);
+
+    ctx.drawImage(staticLayer, 0, 0, WORLD_WIDTH, WORLD_HEIGHT);
     drawLiquids(ctx, level, time);
     drawExits(ctx, level, time);
     drawButtons(ctx, level, world.buttons ?? {});
     drawDoors(ctx, level, world.doors ?? {}, doorOpenness, dt);
-
     for (const player of players) drawPlayer(ctx, player, time);
+
+    // Screen space: arrows towards players outside the visible area
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    for (const player of players) {
+      if (player.character !== localCharacter) {
+        drawOffscreenIndicator(ctx, canvas, player, camera, scale, time);
+      }
+    }
   }
 
   return { draw };
+}
+
+// ---------------------------------------------------------------------------
+// Off-screen indicator: a circle with an arrow on the screen edge, pointing to the other player
+// ---------------------------------------------------------------------------
+
+function drawOffscreenIndicator(ctx, canvas, player, camera, scale, time) {
+  const W = canvas.width;
+  const H = canvas.height;
+
+  // Player center in screen pixels
+  const sx = (player.x + PLAYER_WIDTH / 2 - camera.x) * scale;
+  const sy = (player.y + PLAYER_HEIGHT / 2 - camera.y) * scale;
+
+  const margin = H * 0.02;
+  const visible = sx > -margin && sx < W + margin && sy > -margin && sy < H + margin;
+  if (visible) return;
+
+  // Move from the screen center towards the player until we hit an inner border
+  const size = H * 0.045; // indicator radius
+  const inset = size * 1.8;
+  const cx = W / 2;
+  const cy = H / 2;
+  const dx = sx - cx;
+  const dy = sy - cy;
+  const t = Math.min(
+    dx !== 0 ? (W / 2 - inset) / Math.abs(dx) : Infinity,
+    dy !== 0 ? (H / 2 - inset) / Math.abs(dy) : Infinity,
+  );
+  const ix = cx + dx * t;
+  const iy = cy + dy * t;
+  const angle = Math.atan2(dy, dx);
+  const colors = CHARACTER_COLORS[player.character];
+
+  ctx.save();
+  ctx.globalAlpha = 0.85 + Math.sin(time * 5) * 0.15;
+
+  // Arrow tip pointing towards the player
+  ctx.translate(ix, iy);
+  ctx.rotate(angle);
+  ctx.fillStyle = colors.main;
+  ctx.beginPath();
+  ctx.moveTo(size * 1.7, 0);
+  ctx.lineTo(size * 0.8, -size * 0.6);
+  ctx.lineTo(size * 0.8, size * 0.6);
+  ctx.closePath();
+  ctx.fill();
+  ctx.rotate(-angle);
+
+  // Circle with two small eyes, so it reads as "the other character"
+  ctx.beginPath();
+  ctx.arc(0, 0, size, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.lineWidth = size * 0.15;
+  ctx.strokeStyle = colors.light;
+  ctx.stroke();
+
+  for (const side of [-1, 1]) {
+    ctx.fillStyle = COLORS.eyeWhite;
+    ctx.beginPath();
+    ctx.arc(side * size * 0.35, -size * 0.1, size * 0.25, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = COLORS.pupil;
+    ctx.beginPath();
+    ctx.arc(side * size * 0.35 + Math.cos(angle) * size * 0.1, -size * 0.1 + Math.sin(angle) * size * 0.1, size * 0.12, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
 }
 
 // ---------------------------------------------------------------------------

@@ -354,31 +354,9 @@
     /* Character selection                                                 */
     /* ------------------------------------------------------------------ */
 
-    #select .panel {
-      position: relative;
-    }
-
     .select-title {
       font-size: 22px;
       font-weight: 700;
-      padding: 0 72px; /* room for the Back button */
-    }
-
-    #select-back {
-      position: absolute;
-      top: 14px;
-      left: 14px;
-      padding: 7px 12px;
-      border-radius: 8px;
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      background: rgba(255, 255, 255, 0.08);
-      color: var(--text);
-      font-size: 14px;
-      touch-action: manipulation;
-    }
-
-    #select-back:active {
-      background: rgba(255, 255, 255, 0.25);
     }
 
     .select-room {
@@ -501,21 +479,158 @@
       color: var(--fire);
     }
 
-    /* "Tap to start" on the splash screen, shown when loading is done */
-    #tap-text {
-      font-size: 16px;
-      color: var(--text);
-      animation: pulse 1.4s ease-in-out infinite;
+    /* ------------------------------------------------------------------ */
+    /* Back button: top-left corner of any panel with the .has-back class  */
+    /* ------------------------------------------------------------------ */
+
+    .panel.has-back {
+      position: relative;
+      padding-top: 58px;
     }
 
-    @keyframes pulse {
-      0%,
-      100% {
-        opacity: 1;
-      }
-      50% {
-        opacity: 0.35;
-      }
+    .back-btn {
+      position: absolute;
+      top: 14px;
+      left: 14px;
+      padding: 7px 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text);
+      font-size: 14px;
+      touch-action: manipulation;
+    }
+
+    .back-btn:active {
+      background: rgba(255, 255, 255, 0.25);
+    }
+
+    .panel-title {
+      font-size: 22px;
+      font-weight: 700;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Home: big title + Play / Settings                                   */
+    /* ------------------------------------------------------------------ */
+
+    #home {
+      flex-direction: column;
+      gap: 28px;
+    }
+
+    #home .title {
+      font-size: 60px;
+      margin: 0;
+      text-shadow: 0 4px 24px rgba(0, 0, 0, 0.6);
+    }
+
+    .home-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      width: 220px;
+    }
+
+    .menu-btn {
+      padding: 14px 20px;
+      border-radius: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: rgba(20, 18, 26, 0.85);
+      color: var(--text);
+      font-size: 18px;
+      font-weight: 700;
+      touch-action: manipulation;
+      transition: transform 0.08s;
+    }
+
+    .menu-btn:active {
+      transform: scale(0.96);
+    }
+
+    .menu-btn.primary {
+      border: none;
+      background: linear-gradient(90deg, var(--fire), var(--water));
+      color: #fff;
+      font-size: 22px;
+      padding: 16px 20px;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Settings (empty for now: music and sound will go here)              */
+    /* ------------------------------------------------------------------ */
+
+    #settings .panel {
+      min-width: 320px;
+    }
+
+    .placeholder-text {
+      margin-top: 16px;
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Level selection                                                     */
+    /* ------------------------------------------------------------------ */
+
+    #level-list {
+      display: flex;
+      gap: 14px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-top: 16px;
+    }
+
+    .level-card {
+      width: 120px;
+      height: 120px;
+      border-radius: 14px;
+      border: 2px solid rgba(255, 255, 255, 0.15);
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      touch-action: manipulation;
+      transition: transform 0.08s;
+    }
+
+    .level-card:active:not(:disabled) {
+      transform: scale(0.96);
+    }
+
+    .level-number {
+      font-size: 36px;
+      font-weight: 700;
+      background: linear-gradient(90deg, var(--fire), var(--water));
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+
+    .level-name {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .level-card.locked {
+      opacity: 0.4;
+      border-style: dashed;
+    }
+
+    .level-card.locked .level-number {
+      background: none;
+      color: var(--muted);
+    }
+
+    /* Level shown on the code and selection screens */
+    .level-label {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 12px;
     }
 
     #menu-status.error {
@@ -551,12 +666,41 @@
 
     <button id="fullscreen-btn" aria-label="Fullscreen">&#x26F6;</button>
 
-    <!-- Menu: enter a 4-digit room code with the in-game keypad (shown after the splash screen) -->
+    <!-- Home: shown after loading -->
+    <div id="home" class="overlay hidden">
+      <div class="title"><span class="fire">Babi</span><span class="water">world</span></div>
+      <div class="home-buttons">
+        <button id="play-btn" class="menu-btn primary">Play</button>
+        <button id="settings-btn" class="menu-btn">Settings</button>
+      </div>
+    </div>
+
+    <!-- Settings: empty for now (music and sound will go here) -->
+    <div id="settings" class="overlay hidden">
+      <div class="panel has-back">
+        <button class="back-btn" data-back="home" aria-label="Back to home">&#8592; Back</button>
+        <div class="panel-title">Settings</div>
+        <div class="placeholder-text">Music and sound settings are coming soon.</div>
+      </div>
+    </div>
+
+    <!-- Level selection: filled from levels/index.json -->
+    <div id="levels" class="overlay hidden">
+      <div class="panel has-back">
+        <button class="back-btn" data-back="home" aria-label="Back to home">&#8592; Back</button>
+        <div class="panel-title">Choose a level</div>
+        <div id="level-list"></div>
+      </div>
+    </div>
+
+    <!-- Room code: enter a 4-digit code with the in-game keypad -->
     <div id="menu" class="overlay hidden">
-      <div class="panel menu-layout">
+      <div class="panel menu-layout has-back">
+        <button class="back-btn" data-back="levels" aria-label="Back to levels">&#8592; Back</button>
         <div class="menu-info">
-          <div class="title"><span class="fire">Babi</span><span class="water">world</span></div>
-          <div class="subtitle">Enter the same room code on both phones</div>
+          <div class="panel-title">Room code</div>
+          <div class="level-label" id="menu-level"></div>
+          <div class="subtitle">Enter the same code on both phones</div>
           <div id="code-boxes">
             <div class="code-box"></div>
             <div class="code-box"></div>
@@ -584,11 +728,11 @@
 
     <!-- Character selection: fire or water, the two players can't pick the same one -->
     <div id="select" class="overlay hidden">
-      <div class="panel">
+      <div class="panel has-back">
         <!-- Leave the room and go back to the code keypad (e.g. wrong code) -->
-        <button id="select-back" aria-label="Back to room code">&#8592; Back</button>
+        <button id="select-back" class="back-btn" aria-label="Back to room code">&#8592; Back</button>
         <div class="select-title">Choose your character</div>
-        <div class="select-room">Room <span id="select-code"></span></div>
+        <div class="select-room">Room <span id="select-code"></span> · <span id="select-level"></span></div>
         <div class="cards">
           <button class="card" data-character="fire">
             <div class="char char-fire"><span class="eye"></span><span class="eye"></span></div>
@@ -618,8 +762,6 @@
       <div class="title"><span class="fire">Babi</span><span class="water">world</span></div>
       <div id="loading-bar"><div id="loading-fill"></div></div>
       <div id="loading-text">Loading…</div>
-      <!-- Shown when loading is done: the tap enables fullscreen and landscape lock -->
-      <div id="tap-text" class="hidden">Tap to start</div>
     </div>
   </div>
 
