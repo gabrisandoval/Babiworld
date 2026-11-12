@@ -118,7 +118,9 @@ const isSolid = (tile) => tile !== TILE.EMPTY;
 // ---------------------------------------------------------------------------
 
 // The static layer is drawn at a higher resolution, so it stays sharp when zoomed in.
+// Bigger levels get a slightly lower resolution, to keep memory use reasonable on phones.
 const STATIC_SCALE = 3;
+const STATIC_MAX_PIXELS = 9_000_000;
 
 // `sprites` (optional) is client/sprites/sprites.json plus the loaded images:
 // { frameSize, scale, anchorX, anchorY, headY, animations, images: { fire: Image, water: Image } }.
@@ -127,11 +129,15 @@ export function createRenderer(canvas, level, sprites = null) {
   const ctx = canvas.getContext('2d');
 
   // Static layer (background + walls) is drawn once into an offscreen canvas.
+  // Levels can be bigger than one screen (the camera follows the player).
+  const levelWidth = level.cols * TILE_SIZE;
+  const levelHeight = level.rows * TILE_SIZE;
+  const staticScale = Math.min(STATIC_SCALE, Math.sqrt(STATIC_MAX_PIXELS / (levelWidth * levelHeight)));
   const staticLayer = document.createElement('canvas');
-  staticLayer.width = WORLD_WIDTH * STATIC_SCALE;
-  staticLayer.height = WORLD_HEIGHT * STATIC_SCALE;
+  staticLayer.width = Math.round(levelWidth * staticScale);
+  staticLayer.height = Math.round(levelHeight * staticScale);
   const staticCtx = staticLayer.getContext('2d');
-  staticCtx.scale(STATIC_SCALE, STATIC_SCALE);
+  staticCtx.scale(staticScale, staticScale);
   drawStaticLayer(staticCtx, level);
 
   // Door openness: 0 = closed, 1 = open. Animated towards the server state.
@@ -162,7 +168,7 @@ export function createRenderer(canvas, level, sprites = null) {
     // World space: everything below is drawn in world coordinates
     ctx.setTransform(scale, 0, 0, scale, -camera.x * scale, -camera.y * scale);
 
-    ctx.drawImage(staticLayer, 0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+    ctx.drawImage(staticLayer, 0, 0, levelWidth, levelHeight);
     drawLiquids(ctx, level, time);
     drawExits(ctx, level, time);
     drawButtons(ctx, level, world.buttons ?? {});
@@ -260,20 +266,22 @@ function drawOffscreenIndicator(ctx, canvas, player, camera, scale, time) {
 
 function drawStaticLayer(ctx, level) {
   // Background: dark brick wall
+  const width = level.cols * TILE_SIZE;
+  const height = level.rows * TILE_SIZE;
   ctx.fillStyle = COLORS.background;
-  ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+  ctx.fillRect(0, 0, width, height);
 
   ctx.strokeStyle = COLORS.backgroundBrick;
   ctx.lineWidth = 1;
   const brickH = 15;
   const brickW = 30;
-  for (let y = 0; y < WORLD_HEIGHT; y += brickH) {
+  for (let y = 0; y < height; y += brickH) {
     const offset = (y / brickH) % 2 === 0 ? 0 : brickW / 2;
     ctx.beginPath();
     ctx.moveTo(0, y + 0.5);
-    ctx.lineTo(WORLD_WIDTH, y + 0.5);
+    ctx.lineTo(width, y + 0.5);
     ctx.stroke();
-    for (let x = -offset; x < WORLD_WIDTH; x += brickW) {
+    for (let x = -offset; x < width; x += brickW) {
       ctx.beginPath();
       ctx.moveTo(x + 0.5, y);
       ctx.lineTo(x + 0.5, y + brickH);

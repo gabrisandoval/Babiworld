@@ -4,6 +4,7 @@
     { "id": "level2", "name": "Two Paths" },
     { "id": "level3", "name": "Twin Towers" },
     { "id": "level4", "name": "Poison Run" },
-    { "id": "level5", "name": "Going Up" }
+    { "id": "level5", "name": "Going Up" },
+    { "id": "level6", "name": "The Tower" }
   ]
 }

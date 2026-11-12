@@ -5,7 +5,8 @@
 // World / screen
 // ---------------------------------------------------------------------------
 
-// Fixed logical resolution (16:9). The canvas is scaled to fit the phone screen.
+// Fixed logical resolution (16:9): what the screen shows at zoom 1. The canvas is scaled
+// to fit the phone screen. Levels are at least this big, and can be bigger (the camera follows).
 export const WORLD_WIDTH = 960;
 export const WORLD_HEIGHT = 540;
 

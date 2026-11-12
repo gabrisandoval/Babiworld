@@ -76,7 +76,7 @@ function getObstacles(level, doorStates, rect, ignoreDoors = null, platforms = [
   for (let row = rowStart; row <= rowEnd; row++) {
     for (let col = colStart; col <= colEnd; col++) {
       if (SOLID_TILES.has(tileAt(level, col, row))) {
-        obstacles.push({ x: col * TILE_SIZE, y: row * TILE_SIZE, w: TILE_SIZE, h: TILE_SIZE });
+        obstacles.push({ x: col * TILE_SIZE, y: row * TILE_SIZE, w: TILE_SIZE, h: TILE_SIZE, tile: tileAt(level, col, row) });
       }
     }
   }
@@ -243,10 +243,13 @@ export function stepPlayer(player, input, level, doorStates = {}, dt = FIXED_DT,
   // --- Move on Y, then resolve collisions ---
   player.y += player.vy * dt;
   player.onGround = false;
+  let supports = []; // what the player is standing on (tiles, doors, elevators)
   obstacles = getObstacles(level, doorStates, playerRect(player), insideDoors, platforms);
   if (obstacles.length > 0) {
     if (player.vy > 0) {
-      player.y = Math.min(...obstacles.map((o) => o.y)) - PLAYER_HEIGHT;
+      const top = Math.min(...obstacles.map((o) => o.y));
+      supports = obstacles.filter((o) => o.y === top);
+      player.y = top - PLAYER_HEIGHT;
       player.onGround = true;
     } else if (player.vy < 0) {
       player.y = Math.max(...obstacles.map((o) => o.y + o.h));
@@ -254,12 +257,16 @@ export function stepPlayer(player, input, level, doorStates = {}, dt = FIXED_DT,
     player.vy = 0;
   }
 
-  // --- Deadly liquids: check the tile under the center of the feet ---
+  // --- Deadly liquids ---
+  // 1. the tile under the center of the feet (touching the edge of a pool with a foot is fine)
+  // 2. standing only on deadly liquid, e.g. on the edge of a platform made entirely of liquid
   if (player.onGround) {
+    const kills = LIQUID_KILLS[player.character];
     const footCol = Math.floor((player.x + PLAYER_WIDTH / 2) / TILE_SIZE);
     const footRow = Math.floor((player.y + PLAYER_HEIGHT) / TILE_SIZE);
-    const tileBelow = tileAt(level, footCol, footRow);
-    if (LIQUID_KILLS[player.character].has(tileBelow)) {
+    const onDeadlyCenter = kills.has(tileAt(level, footCol, footRow));
+    const onlyDeadly = supports.length > 0 && supports.every((o) => o.tile !== undefined && kills.has(o.tile));
+    if (onDeadlyCenter || onlyDeadly) {
       killPlayer(player);
       return { died: true };
     }

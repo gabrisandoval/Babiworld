@@ -15,6 +15,7 @@ import {
   WORLD_HEIGHT,
   PLAYER_WIDTH,
   PLAYER_HEIGHT,
+  TILE_SIZE,
   FIXED_DT,
   CLIENT_SEND_RATE,
   INTERPOLATION_DELAY,
@@ -857,19 +858,26 @@ function updateCamera(dt) {
   const targetZoom = localPlayer ? CAMERA_ZOOM : 1;
   camera.zoom += (targetZoom - camera.zoom) * Math.min(1, dt * CAMERA_ZOOM_SPEED);
 
+  // The screen always shows WORLD_WIDTH × WORLD_HEIGHT world pixels at zoom 1;
+  // a level can be bigger than that, and the camera stays inside the level.
   const viewW = WORLD_WIDTH / camera.zoom;
   const viewH = WORLD_HEIGHT / camera.zoom;
+  const levelW = level ? level.cols * TILE_SIZE : WORLD_WIDTH;
+  const levelH = level ? level.rows * TILE_SIZE : WORLD_HEIGHT;
+  const maxX = Math.max(0, levelW - viewW);
+  const maxY = Math.max(0, levelH - viewH);
 
-  // Point to keep in the center: the local player, or the level center in the menus
-  const focusX = localPlayer ? localPlayer.x + PLAYER_WIDTH / 2 : WORLD_WIDTH / 2;
-  const focusY = localPlayer ? localPlayer.y + PLAYER_HEIGHT / 2 : WORLD_HEIGHT / 2;
+  // Point to keep in the center: the local player, or in the menus the bottom of the
+  // level (where the players start; for one-screen levels this is the whole level)
+  const focusX = localPlayer ? localPlayer.x + PLAYER_WIDTH / 2 : levelW / 2;
+  const focusY = localPlayer ? localPlayer.y + PLAYER_HEIGHT / 2 : levelH - viewH / 2;
 
-  const targetX = clamp(focusX - viewW / 2, 0, WORLD_WIDTH - viewW);
-  const targetY = clamp(focusY - viewH / 2, 0, WORLD_HEIGHT - viewH);
+  const targetX = clamp(focusX - viewW / 2, 0, maxX);
+  const targetY = clamp(focusY - viewH / 2, 0, maxY);
 
   const follow = Math.min(1, dt * CAMERA_FOLLOW_SPEED);
-  camera.x = clamp(camera.x + (targetX - camera.x) * follow, 0, WORLD_WIDTH - viewW);
-  camera.y = clamp(camera.y + (targetY - camera.y) * follow, 0, WORLD_HEIGHT - viewH);
+  camera.x = clamp(camera.x + (targetX - camera.x) * follow, 0, maxX);
+  camera.y = clamp(camera.y + (targetY - camera.y) * follow, 0, maxY);
 }
 
 // ---------------------------------------------------------------------------
