@@ -10,7 +10,7 @@
 //
 // What the Tiled map must contain (see maps/level1.tmj):
 //
-//   Map size: 32 × 18 tiles.
+//   Map size: at least 32 × 18 tiles (one screen). Bigger maps are fine: the camera follows the player.
 //   Map property  "name" (string)  -> level name shown in the game (optional).
 //
 //   Tile layer "tiles": walls and pools. Each tile of the tileset has a custom property
@@ -99,8 +99,8 @@ function convertMap(mapFile) {
   const tileH = map.tileheight;
 
   if (map.infinite) errors.push('The map must not be "infinite" (Map > Map Properties).');
-  if (map.width !== GRID_COLS || map.height !== GRID_ROWS) {
-    errors.push(`The map must be ${GRID_COLS} × ${GRID_ROWS} tiles, this one is ${map.width} × ${map.height}.`);
+  if (map.width < GRID_COLS || map.height < GRID_ROWS) {
+    errors.push(`The map must be at least ${GRID_COLS} × ${GRID_ROWS} tiles, this one is ${map.width} × ${map.height}.`);
   }
 
   // --- Tiles ---
