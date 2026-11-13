@@ -7,7 +7,7 @@
 //
 //   time           -> seconds since start (drives animations)
 //   players        -> [{ character, x, y, facing, state, alive }]
-//   world          -> { buttons: { id: pressed }, doors: { id: open } }
+//   world          -> { buttons: { id: pressed }, doors: { id: open }, elevators, gems: [taken gem ids] }
 //   camera         -> { x, y, zoom }: top-left corner of the visible area (world px) and zoom
 //                     (zoom 1 = whole level visible)
 //   localCharacter -> this phone's character: an arrow points to the OTHER player when off-screen
@@ -25,7 +25,7 @@ import {
   PLAYER_HEIGHT,
   PLAYER_STATE,
 } from '/shared/constants.js';
-import { tileAt, entityRect } from '/shared/physics.js';
+import { tileAt, entityRect, gemRect } from '/shared/physics.js';
 
 // ---------------------------------------------------------------------------
 // Palette
@@ -69,6 +69,13 @@ const COLORS = {
 
   eyeWhite: '#ffffff',
   pupil: '#1a1a22',
+};
+
+// Gem colors: main, light (highlight), dark (shadow side)
+const GEM_COLORS = {
+  red: ['#ff4d5e', '#ffb3ba', '#b3202f'],
+  blue: ['#3fa9ff', '#b8e0ff', '#1662b3'],
+  purple: ['#b06cff', '#e2c8ff', '#6a2fb3'],
 };
 
 const LIQUID_COLORS = {
@@ -174,6 +181,7 @@ export function createRenderer(canvas, level, sprites = null) {
     drawButtons(ctx, level, world.buttons ?? {});
     drawDoors(ctx, level, world.doors ?? {}, doorOpenness, dt);
     drawElevators(ctx, level, elevatorOffsets, world.elevators ?? {}, time);
+    drawGems(ctx, level, world.gems ?? [], time);
     for (const player of players) {
       if (sprites?.images?.[player.character]) drawSpritePlayer(ctx, player, time, sprites);
       else drawPlayer(ctx, player, time);
@@ -486,6 +494,65 @@ function drawElevators(ctx, level, offsets, activeStates, time) {
     ctx.arc(start.x + start.w / 2, y + start.h - 11, 2.5, 0, Math.PI * 2);
     ctx.fill();
     ctx.globalAlpha = 1;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Gems: floating diamonds with a soft glow; taken gems are not drawn
+// ---------------------------------------------------------------------------
+
+function drawGems(ctx, level, taken, time) {
+  const takenSet = new Set(taken);
+  for (const gem of level.gems ?? []) {
+    if (takenSet.has(gem.id)) continue;
+    const [main, light, dark] = GEM_COLORS[gem.color] ?? GEM_COLORS.purple;
+    const r = gemRect(gem);
+    const cx = r.x + r.w / 2;
+    const cy = r.y + r.h / 2 + Math.sin(time * 3 + gem.col) * 2; // gentle float
+    const w = 8;
+    const h = 10;
+
+    // Glow
+    ctx.globalAlpha = 0.25 + Math.sin(time * 4 + gem.row) * 0.1;
+    ctx.fillStyle = main;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 11, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // Diamond: dark right half, main left half, light top facet
+    ctx.fillStyle = dark;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - h);
+    ctx.lineTo(cx + w, cy - 2);
+    ctx.lineTo(cx, cy + h);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = main;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - h);
+    ctx.lineTo(cx - w, cy - 2);
+    ctx.lineTo(cx, cy + h);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = light;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - h);
+    ctx.lineTo(cx - w * 0.55, cy - 3);
+    ctx.lineTo(cx + w * 0.55, cy - 3);
+    ctx.closePath();
+    ctx.fill();
+
+    // Sparkle
+    const sparkle = (time * 1.3 + gem.col * 0.37) % 2;
+    if (sparkle < 0.25) {
+      ctx.globalAlpha = 1 - sparkle * 4;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(cx - 4, cy - 6, 2, 2);
+      ctx.globalAlpha = 1;
+    }
   }
 }
 

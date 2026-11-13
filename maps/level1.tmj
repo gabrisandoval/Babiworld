@@ -10,7 +10,7 @@
   "tileheight": 30,
   "infinite": false,
   "nextlayerid": 3,
-  "nextobjectid": 8,
+  "nextobjectid": 13,
   "properties": [
     {
       "name": "name",
@@ -182,6 +182,96 @@
               "name": "character",
               "type": "string",
               "value": "water"
+            }
+          ]
+        },
+        {
+          "id": 8,
+          "name": "gem_red_1",
+          "type": "gem",
+          "x": 180,
+          "y": 480,
+          "width": 30,
+          "height": 30,
+          "rotation": 0,
+          "visible": true,
+          "properties": [
+            {
+              "name": "color",
+              "type": "string",
+              "value": "red"
+            }
+          ]
+        },
+        {
+          "id": 9,
+          "name": "gem_blue_1",
+          "type": "gem",
+          "x": 330,
+          "y": 480,
+          "width": 30,
+          "height": 30,
+          "rotation": 0,
+          "visible": true,
+          "properties": [
+            {
+              "name": "color",
+              "type": "string",
+              "value": "blue"
+            }
+          ]
+        },
+        {
+          "id": 10,
+          "name": "gem_red_2",
+          "type": "gem",
+          "x": 630,
+          "y": 360,
+          "width": 30,
+          "height": 30,
+          "rotation": 0,
+          "visible": true,
+          "properties": [
+            {
+              "name": "color",
+              "type": "string",
+              "value": "red"
+            }
+          ]
+        },
+        {
+          "id": 11,
+          "name": "gem_blue_2",
+          "type": "gem",
+          "x": 390,
+          "y": 300,
+          "width": 30,
+          "height": 30,
+          "rotation": 0,
+          "visible": true,
+          "properties": [
+            {
+              "name": "color",
+              "type": "string",
+              "value": "blue"
+            }
+          ]
+        },
+        {
+          "id": 12,
+          "name": "gem_purple_1",
+          "type": "gem",
+          "x": 90,
+          "y": 180,
+          "width": 30,
+          "height": 30,
+          "rotation": 0,
+          "visible": true,
+          "properties": [
+            {
+              "name": "color",
+              "type": "string",
+              "value": "purple"
             }
           ]
         }

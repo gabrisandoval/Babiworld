@@ -18,7 +18,7 @@
   <link rel="apple-touch-icon" href="/icons/babiworld.png?v=2" />
 
   <!-- All styles are in style.css ("?v=1": change it after editing the CSS, to skip the cache) -->
-  <link rel="stylesheet" href="/style.css?v=2" />
+  <link rel="stylesheet" href="/style.css?v=4" />
 </head>
 
 <body>
@@ -34,6 +34,8 @@
       <button class="control" data-control="right" aria-label="Move right">&#9654;</button>
       <button class="control" data-control="jump" aria-label="Jump">&#9650;</button>
       <button id="game-menu-btn" aria-label="Menu">&#9776;</button>
+      <!-- Gems taken in this run, by color -->
+      <div id="gem-hud"></div>
     </div>
 
     <button id="fullscreen-btn" aria-label="Fullscreen">&#x26F6;</button>
@@ -56,17 +58,34 @@
         <button class="back-btn" data-back="home" aria-label="Back to home">&#8592; Back</button>
         <div class="panel-title">Settings</div>
         <div class="placeholder-text">Music and sound settings are coming soon.</div>
+        <div class="settings-section">
+          <div class="settings-label">Game progress on this phone</div>
+          <div class="settings-value" id="settings-progress"></div>
+          <button id="reset-btn" class="menu-btn danger small">Reset game</button>
+        </div>
       </div>
     </div>
 
-    <!-- Level selection, shared by the two players of the room:
-         one proposes a level, the other confirms it -->
+    <!-- Land selection (story mode): the first land is open, the next ones unlock
+         when the previous land is completed; the last one needs gems -->
+    <div id="lands" class="overlay hidden">
+      <div class="panel has-back">
+        <button id="lands-back" class="back-btn" aria-label="Leave the room">&#8592; Home</button>
+        <div class="panel-title">Choose a land</div>
+        <div class="select-room">Room <span id="lands-code"></span> · <span id="lands-gems"></span></div>
+        <div id="land-list" class="card-row"></div>
+        <div id="lands-status"></div>
+      </div>
+    </div>
+
+    <!-- Levels of a land, shared by the two players of the room:
+         one proposes a level, the other confirms it. Levels unlock one after the other. -->
     <div id="levels" class="overlay hidden">
       <div class="panel has-back">
-        <button id="levels-back" class="back-btn" aria-label="Leave the room">&#8592; Home</button>
-        <div class="panel-title">Choose a level</div>
-        <div class="select-room">Room <span id="levels-code"></span></div>
-        <div id="level-list"></div>
+        <button id="levels-back" class="back-btn" aria-label="Back to the lands">&#8592; Lands</button>
+        <div class="panel-title" id="levels-title">Choose a level</div>
+        <div class="select-room">Room <span id="levels-code"></span> · <span id="levels-gems"></span></div>
+        <div id="level-list" class="card-row"></div>
         <div id="proposal" class="hidden">
           <span id="proposal-text"></span>
           <button id="proposal-accept" class="menu-btn primary small">Play</button>
@@ -145,6 +164,7 @@
       <div class="panel">
         <div class="complete-title">Level complete!</div>
         <div class="level-label" id="complete-level"></div>
+        <div id="complete-gems"></div>
         <div class="dialog-buttons">
           <button id="complete-levels" class="menu-btn">Levels</button>
           <button id="complete-replay" class="menu-btn">Play again</button>
@@ -165,6 +185,19 @@
           <button id="quit-leave" class="menu-btn primary">Leave</button>
         </div>
       </div>
+    </div>
+
+    <!-- Story scenes before a level: one illustration at a time with its text.
+         Skip appears only if both players have already completed the level. -->
+    <div id="story" class="hidden">
+      <img id="story-image" alt="" />
+      <div id="story-placeholder" class="hidden">
+        <div class="story-placeholder-icon">&#9634;</div>
+        <div id="story-placeholder-name"></div>
+      </div>
+      <div id="story-text"></div>
+      <div id="story-dots"></div>
+      <button id="story-skip" class="hidden">Skip &#8250;</button>
     </div>
 
     <!-- Splash screen with loading bar (hidden by game.js when loading is done) -->
