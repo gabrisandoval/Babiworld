@@ -617,6 +617,7 @@ body {
    (the in-game dialogs keep the transparent .overlay background, so the game stays visible) */
 #menu,
 #select,
+#lands,
 #levels,
 #settings {
   background: var(--menu-background);
@@ -690,16 +691,17 @@ body {
 /* Level selection                                                     */
 /* ------------------------------------------------------------------ */
 
-/* The level screen is as wide as the screen allows */
+/* The land and level screens are as wide as the screen allows */
+#lands .panel,
 #levels .panel {
   width: min(760px, calc(100cqw - 32px));
   padding-left: 18px;
   padding-right: 18px;
 }
 
-/* Levels in one row that scrolls sideways when they don't fit,
+/* Lands / levels in one row that scrolls sideways when they don't fit,
    so the card never grows taller than the screen (more levels will come with the story) */
-#level-list {
+.card-row {
   display: flex;
   gap: 12px;
   flex-wrap: nowrap;
@@ -714,11 +716,11 @@ body {
 }
 
 /* Center the row when it fits, scroll from the first card when it doesn't */
-#level-list > :first-child {
+.card-row > :first-child {
   margin-left: auto;
 }
 
-#level-list > :last-child {
+.card-row > :last-child {
   margin-right: auto;
 }
 
@@ -789,7 +791,8 @@ body {
   border-radius: 10px;
 }
 
-#levels-status {
+#levels-status,
+#lands-status {
   margin-top: 10px;
   min-height: 18px;
   font-size: 13px;
@@ -826,4 +829,305 @@ body {
   margin-top: 6px;
   font-size: 14px;
   color: var(--muted);
+}
+
+/* Element under the character name on the selection cards (e.g. "Luigi" / "Fire") */
+.card-element {
+  margin-top: -6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ------------------------------------------------------------------ */
+/* Lands                                                               */
+/* ------------------------------------------------------------------ */
+
+.land-card {
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+  position: relative;
+  width: 150px;
+  height: 128px;
+  padding: 10px;
+  border-radius: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  overflow: hidden;
+  touch-action: manipulation;
+  transition: transform 0.08s;
+  /* Each land has its own colors (set by --land-a / --land-b in .land-<id>) */
+  background:
+    linear-gradient(180deg, transparent 20%, rgba(10, 9, 14, 0.85) 100%),
+    linear-gradient(135deg, var(--land-a, #4a4456), var(--land-b, #1d1a24));
+}
+
+.land-card:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.land-caves { --land-a: #5b6a8a; --land-b: #232838; }
+.land-factory { --land-a: #b06a35; --land-b: #3a2418; }
+.land-swamp { --land-a: #4f8a3a; --land-b: #1f2b1a; }
+.land-lake { --land-a: #6ec3e8; --land-b: #1b3a4f; }
+.land-portal { --land-a: #a855f7; --land-b: #2a1440; }
+
+.land-number {
+  position: absolute;
+  top: 8px;
+  left: 12px;
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.land-name {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.15;
+  text-align: center;
+}
+
+.land-info {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.land-card.locked {
+  filter: grayscale(0.9) brightness(0.6);
+  border-style: dashed;
+}
+
+.land-card.proposed-here {
+  border-color: var(--brand-purple);
+}
+
+.lock-icon {
+  position: absolute;
+  top: 7px;
+  right: 10px;
+  font-size: 16px;
+  opacity: 0.9;
+}
+
+/* Small gem counter, e.g. "◆ 3/5" */
+.gem-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.gem-count::before,
+.gem-pill::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  transform: rotate(45deg);
+  background: linear-gradient(135deg, #ff4d5e, #3fa9ff 60%, #b06cff);
+  border-radius: 1px;
+}
+
+/* Level cards: lock and gems */
+.level-card .gem-count {
+  font-size: 11px;
+}
+
+.level-card .lock-icon {
+  position: static;
+  transform: none;
+  font-size: 22px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Gems in game (HUD) and on the "Level complete" screen               */
+/* ------------------------------------------------------------------ */
+
+#gem-hud {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.gem-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: rgba(10, 9, 14, 0.55);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.gem-pill.red::before {
+  background: #ff4d5e;
+}
+
+.gem-pill.blue::before {
+  background: #3fa9ff;
+}
+
+.gem-pill.purple::before {
+  background: #b06cff;
+}
+
+.gem-pill.full {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.5) inset;
+}
+
+#complete-gems {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  margin-top: 10px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Settings                                                            */
+/* ------------------------------------------------------------------ */
+
+.settings-section {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-label {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.settings-value {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.menu-btn.danger {
+  border-color: rgba(255, 90, 80, 0.6);
+  color: #ff8a80;
+}
+
+/* ------------------------------------------------------------------ */
+/* Story scenes                                                        */
+/* ------------------------------------------------------------------ */
+
+#story {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  background: #000;
+  overflow: hidden;
+}
+
+#story-image,
+#story-placeholder {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: opacity 0.5s;
+}
+
+#story-image.fading,
+#story-placeholder.fading {
+  opacity: 0;
+}
+
+/* Shown until the illustration exists */
+#story-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding-bottom: 20%;
+  color: rgba(255, 255, 255, 0.35);
+  background:
+    radial-gradient(circle at 25% 65%, rgba(74, 222, 128, 0.18), transparent 50%),
+    radial-gradient(circle at 75% 35%, rgba(168, 85, 247, 0.22), transparent 50%),
+    #120f1a;
+}
+
+#story-placeholder.hidden {
+  display: none;
+}
+
+.story-placeholder-icon {
+  font-size: 42px;
+}
+
+#story-placeholder-name {
+  font-size: 13px;
+  font-family: ui-monospace, Menlo, monospace;
+}
+
+#story-text {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 40px max(60px, calc(var(--inset-l) + 20px)) 34px;
+  background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.85) 45%);
+  color: #fff;
+  font-size: 20px;
+  line-height: 1.35;
+  text-align: center;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+  transition: opacity 0.4s;
+}
+
+#story-text.fading {
+  opacity: 0;
+}
+
+#story-dots {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 12px;
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+}
+
+#story-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.3);
+}
+
+#story-dots span.active {
+  background: #fff;
+}
+
+#story-skip {
+  position: absolute;
+  top: 14px;
+  right: max(16px, calc(var(--inset-r) + 12px));
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  background: rgba(0, 0, 0, 0.4);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  touch-action: manipulation;
 }

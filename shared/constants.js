@@ -52,6 +52,22 @@ export const LIQUID_KILLS = Object.freeze({
 export const PLAYER_WIDTH = 22;
 export const PLAYER_HEIGHT = 28;
 
+// Gems: red only for fire, blue only for water, purple for both (placed where teamwork is needed).
+export const GEM = Object.freeze({
+  RED: 'red',
+  BLUE: 'blue',
+  PURPLE: 'purple',
+});
+
+export const GEM_OWNER = Object.freeze({
+  [GEM.RED]: CHARACTER.FIRE,
+  [GEM.BLUE]: CHARACTER.WATER,
+  [GEM.PURPLE]: null, // anyone
+});
+
+// Size of the gem pickup area, centered in its tile.
+export const GEM_SIZE = 16;
+
 // Animation states, derived from physics and sent over the network.
 export const PLAYER_STATE = Object.freeze({
   IDLE: 'idle',

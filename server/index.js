@@ -3,7 +3,10 @@
 // Hybrid network model:
 // - each client simulates its own character and sends its state here
 // - the server forwards that state to the other player
-// - the server is authoritative over the world: buttons, doors, death, victory
+// - the server is authoritative over the world: buttons, doors, gems, death, victory
+//
+// Story progress (completed levels, gems) is saved on each phone and sent here when
+// joining a room: the room plays with the progress of both players merged.
 
 import express from 'express';
 import http from 'node:http';
@@ -14,7 +17,16 @@ import { fileURLToPath } from 'node:url';
 import { Server } from 'socket.io';
 
 import { CHARACTER, RESPAWN_DELAY } from '../shared/constants.js';
-import { computeWorldState, isLevelComplete } from '../shared/physics.js';
+import { computeWorldState, isLevelComplete, canCollectGem } from '../shared/physics.js';
+import {
+  normalizeProgress,
+  mergeProgress,
+  addLevelResult,
+  isCompleted,
+  computeProgressView,
+  isLevelUnlocked,
+  nextLevelId,
+} from '../shared/progress.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -27,8 +39,13 @@ const PORT = process.env.PORT || 3000;
 
 const readJson = (...parts) => JSON.parse(fs.readFileSync(path.join(ROOT, ...parts), 'utf8'));
 
-const levelIndex = readJson('levels', 'index.json').levels;
+const index = readJson('levels', 'index.json');
+const levelIndex = index.levels;
 const levels = new Map(levelIndex.map(({ id }) => [id, readJson('levels', `${id}.json`)]));
+const levelsById = Object.fromEntries(levels);
+
+// Default duration of one story scene (seconds), if the level doesn't say otherwise.
+const SCENE_DURATION = 4;
 
 console.log(`Loaded ${levels.size} level(s): ${[...levels.keys()].join(', ')}`);
 
@@ -54,20 +71,22 @@ const io = new Server(server);
  *
  * code -> {
  *   code: string,
- *   players: Map<socketId, { id, character, snapshot }>,
+ *   players: Map<socketId, { id, character, snapshot, progress }>,
  *   status: 'select'    // characters not chosen yet (or only one player in the room)
- *         | 'levels'    // both ready: choosing the level together
+ *         | 'levels'    // both ready: choosing the land and level together
+ *         | 'story'     // story scenes before a level
  *         | 'playing' | 'dead' | 'complete',
  *   levelId: string | null,          // level being played (or the last one)
  *   proposal: { levelId, by } | null, // level proposed on the level screen, waiting for the other player
  *   votes: Map<socketId, 'replay' | 'next'>, // choices on the "Level complete" screen
- *   world: { buttons, doors },
+ *   world: { buttons, doors, elevators, gems: [gemId] },
+ *   storyCanSkip: boolean,           // both players already completed the level
  *   timer: Timeout | null
  * }
  */
 const rooms = new Map();
 
-const IN_GAME = new Set(['playing', 'dead', 'complete']);
+const IN_GAME = new Set(['story', 'playing', 'dead', 'complete']);
 
 function createRoom(code) {
   const room = {
@@ -77,7 +96,8 @@ function createRoom(code) {
     levelId: null,
     proposal: null,
     votes: new Map(),
-    world: { buttons: {}, doors: {} },
+    world: { buttons: {}, doors: {}, elevators: {}, gems: [] },
+    storyCanSkip: false,
     timer: null,
   };
   rooms.set(code, room);
@@ -86,10 +106,13 @@ function createRoom(code) {
 
 const roomLevel = (room) => levels.get(room.levelId);
 
-// Level after the given one in levels/index.json (null if it is the last one).
-function nextLevelId(levelId) {
-  const i = levelIndex.findIndex((l) => l.id === levelId);
-  return i >= 0 && i + 1 < levelIndex.length ? levelIndex[i + 1].id : null;
+// Progress of the pair: everything either player has unlocked or collected.
+function roomProgress(room) {
+  return mergeProgress(...[...room.players.values()].map((p) => p.progress));
+}
+
+function roomView(room) {
+  return computeProgressView(index, levelsById, roomProgress(room));
 }
 
 // Room codes: 3 to 8 letters or digits, case-insensitive.
@@ -128,6 +151,7 @@ function roomUpdate(room) {
     levelId: room.levelId,
     proposal: room.proposal,
     players: publicPlayers(room),
+    progress: roomProgress(room),
   };
 }
 
@@ -158,6 +182,32 @@ function clearRoomTimer(room) {
   }
 }
 
+// Shows the story scenes of the level (if it has any), then starts it.
+// The scenes can be skipped only if both players have already completed the level.
+function beginLevel(room, levelId) {
+  const story = levels.get(levelId)?.story ?? [];
+  if (story.length === 0) {
+    startLevel(room, levelId);
+    return;
+  }
+
+  clearRoomTimer(room);
+  room.levelId = levelId;
+  room.proposal = null;
+  room.votes.clear();
+  room.status = 'story';
+  room.storyCanSkip = [...room.players.values()].every((p) => isCompleted(p.progress, levelId));
+
+  const duration = story.reduce((sum, scene) => sum + (scene.duration ?? SCENE_DURATION), 0);
+  io.to(room.code).emit('story:start', { levelId, canSkip: room.storyCanSkip });
+  room.timer = setTimeout(() => startLevel(room, levelId), duration * 1000 + 300);
+  console.log(`[${room.code}] story ${levelId}${room.storyCanSkip ? ' (skippable)' : ''}`);
+}
+
+function emptyWorld(room) {
+  return { ...computeWorldState(roomLevel(room), []), gems: [] };
+}
+
 // Starts (or restarts) a level for both players.
 function startLevel(room, levelId) {
   clearRoomTimer(room);
@@ -165,7 +215,7 @@ function startLevel(room, levelId) {
   room.proposal = null;
   room.votes.clear();
   for (const player of room.players.values()) player.snapshot = null;
-  room.world = computeWorldState(roomLevel(room), []);
+  room.world = emptyWorld(room);
   room.status = 'playing';
   io.to(room.code).emit('game:start', {
     levelId: room.levelId,
@@ -181,17 +231,37 @@ function handleDeath(room, character) {
   room.timer = setTimeout(() => startLevel(room, room.levelId), RESPAWN_DELAY);
 }
 
-// After a win the game waits: each player chooses Play again, Next level or Levels.
+// After a win: both players save the level and the gems (the phones do the same),
+// then each one chooses Play again, Next level or Levels.
 function handleLevelComplete(room) {
   room.status = 'complete';
   room.votes.clear();
-  io.to(room.code).emit('level:complete', { levelId: room.levelId, nextLevelId: nextLevelId(room.levelId) });
+  const gems = room.world.gems;
+  for (const player of room.players.values()) {
+    player.progress = addLevelResult(player.progress, room.levelId, gems);
+  }
+  io.to(room.code).emit('level:complete', {
+    levelId: room.levelId,
+    nextLevelId: nextLevelId(roomView(room), room.levelId),
+    gems,
+    totalGems: roomLevel(room).gems?.length ?? 0,
+  });
+  broadcastRoom(room); // updated progress (unlocked levels)
 }
 
-// Recomputes buttons and doors, and notifies both players only if something changed.
+// Recomputes buttons, doors and gems, and notifies both players only if something changed.
+// Gems stay taken until the level restarts (e.g. after a death).
 function updateWorld(room) {
+  const players = activePlayers(room);
   // Previous door states: an open door stays open while someone is inside the doorway.
-  const world = computeWorldState(roomLevel(room), activePlayers(room), room.world.doors);
+  const world = computeWorldState(roomLevel(room), players, room.world.doors);
+
+  const taken = new Set(room.world.gems);
+  for (const gem of roomLevel(room).gems ?? []) {
+    if (!taken.has(gem.id) && players.some((p) => canCollectGem(p, gem))) taken.add(gem.id);
+  }
+  world.gems = [...taken];
+
   if (JSON.stringify(world) !== JSON.stringify(room.world)) {
     room.world = world;
     io.to(room.code).emit('world:update', world);
@@ -221,7 +291,8 @@ function sanitizeSnapshot(data) {
 io.on('connection', (socket) => {
   let room = null;
 
-  // Payload: { code }. The room is created by the first player who uses that PIN.
+  // Payload: { code, progress }. The room is created by the first player who uses that PIN.
+  // progress = this phone's saved story progress.
   socket.on('room:join', (data) => {
     if (room) return; // already in a room
 
@@ -239,7 +310,12 @@ io.on('connection', (socket) => {
 
     // The character is chosen afterwards, on the selection screen.
     room = target;
-    room.players.set(socket.id, { id: socket.id, character: null, snapshot: null });
+    room.players.set(socket.id, {
+      id: socket.id,
+      character: null,
+      snapshot: null,
+      progress: normalizeProgress(data?.progress),
+    });
     socket.join(code);
     backToLobby(room);
 
@@ -267,11 +343,13 @@ io.on('connection', (socket) => {
 
   // Level screen: one player proposes a level, the other confirms it.
   // Proposing the level the other player already proposed counts as confirming it.
+  // Only unlocked levels can be proposed.
   socket.on('level:propose', (levelId) => {
     if (!room || room.status !== 'levels' || !levels.has(levelId)) return;
+    if (!isLevelUnlocked(roomView(room), levelId)) return;
 
     if (room.proposal && room.proposal.by !== socket.id && room.proposal.levelId === levelId) {
-      startLevel(room, levelId);
+      beginLevel(room, levelId);
       return;
     }
 
@@ -282,7 +360,13 @@ io.on('connection', (socket) => {
   socket.on('level:accept', () => {
     if (!room || room.status !== 'levels' || !room.proposal) return;
     if (room.proposal.by === socket.id) return; // you can't confirm your own proposal
-    startLevel(room, room.proposal.levelId);
+    beginLevel(room, room.proposal.levelId);
+  });
+
+  // Skip the story scenes (allowed only if both players already completed the level).
+  socket.on('story:skip', () => {
+    if (!room || room.status !== 'story' || !room.storyCanSkip) return;
+    startLevel(room, room.levelId);
   });
 
   socket.on('level:cancel', () => {
@@ -316,13 +400,16 @@ io.on('connection', (socket) => {
   socket.on('level:vote', (choice) => {
     if (!room || room.status !== 'complete') return;
     if (choice !== 'replay' && choice !== 'next') return;
-    if (choice === 'next' && !nextLevelId(room.levelId)) return;
+    const next = nextLevelId(roomView(room), room.levelId);
+    if (choice === 'next' && !next) return;
 
     room.votes.set(socket.id, choice);
     const choices = [...room.players.keys()].map((id) => room.votes.get(id));
 
     if (room.players.size === 2 && choices.every((c) => c === choice)) {
-      startLevel(room, choice === 'next' ? nextLevelId(room.levelId) : room.levelId);
+      // Play again starts right away; the next level shows its story first.
+      if (choice === 'next') beginLevel(room, next);
+      else startLevel(room, room.levelId);
     } else {
       io.to(room.code).emit('level:votes', Object.fromEntries(room.votes));
     }

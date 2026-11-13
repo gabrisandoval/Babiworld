@@ -9,6 +9,8 @@ import {
   PLAYER_WIDTH,
   PLAYER_HEIGHT,
   PLAYER_STATE,
+  GEM_OWNER,
+  GEM_SIZE,
   GRAVITY,
   MOVE_SPEED,
   JUMP_VELOCITY,
@@ -361,6 +363,23 @@ export function isInExit(player, exit) {
   const cx = player.x + PLAYER_WIDTH / 2;
   const cy = player.y + PLAYER_HEIGHT / 2;
   return cx >= rect.x && cx <= rect.x + rect.w && cy >= rect.y && cy <= rect.y + rect.h;
+}
+
+// ---------------------------------------------------------------------------
+// Gems
+// ---------------------------------------------------------------------------
+
+export function gemRect(gem) {
+  const offset = (TILE_SIZE - GEM_SIZE) / 2;
+  return { x: gem.col * TILE_SIZE + offset, y: gem.row * TILE_SIZE + offset, w: GEM_SIZE, h: GEM_SIZE };
+}
+
+// True if this player can take this gem right now (right color and touching it).
+export function canCollectGem(player, gem) {
+  if (!player.alive) return false;
+  const owner = GEM_OWNER[gem.color];
+  if (owner && owner !== player.character) return false;
+  return rectsOverlap(playerRect(player), gemRect(gem));
 }
 
 // The level is complete when every exit has its own player inside.

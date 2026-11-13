@@ -40,5 +40,22 @@
   "exits": [
     { "id": "exit_fire", "character": "fire", "col": 2, "row": 8, "width": 1, "height": 2 },
     { "id": "exit_water", "character": "water", "col": 4, "row": 8, "width": 1, "height": 2 }
+  ],
+  "gems": [
+    { "id": "gem_red_1", "color": "red", "col": 6, "row": 9 },
+    { "id": "gem_red_2", "color": "red", "col": 28, "row": 12 },
+    { "id": "gem_blue_1", "color": "blue", "col": 24, "row": 14 },
+    { "id": "gem_blue_2", "color": "blue", "col": 17, "row": 9 },
+    { "id": "gem_purple_1", "color": "purple", "col": 12, "row": 15 }
+  ],
+  "story": [
+    {
+      "image": "story/swamp-intro.jpg",
+      "text": "The air turned green and heavy. Here, the poison spares no one."
+    },
+    {
+      "image": "story/swamp-1.jpg",
+      "text": "One wrong step, and both of them are back at the start."
+    }
   ]
 }

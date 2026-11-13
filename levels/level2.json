@@ -38,5 +38,18 @@
   "exits": [
     { "id": "exit_fire", "character": "fire", "col": 21, "row": 8, "width": 1, "height": 2 },
     { "id": "exit_water", "character": "water", "col": 23, "row": 8, "width": 1, "height": 2 }
+  ],
+  "gems": [
+    { "id": "gem_red_1", "color": "red", "col": 12, "row": 9 },
+    { "id": "gem_red_2", "color": "red", "col": 17, "row": 9 },
+    { "id": "gem_blue_1", "color": "blue", "col": 12, "row": 16 },
+    { "id": "gem_blue_2", "color": "blue", "col": 21, "row": 16 },
+    { "id": "gem_purple_1", "color": "purple", "col": 27, "row": 12 }
+  ],
+  "story": [
+    {
+      "image": "story/caves-2.jpg",
+      "text": "The cave split in two: one path of fire, one of water."
+    }
   ]
 }

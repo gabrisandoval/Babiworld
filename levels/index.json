@@ -1,4 +1,11 @@
 {
+  "lands": [
+    { "id": "caves", "name": "The Portal Caves", "levels": ["level1", "level2", "level3"] },
+    { "id": "factory", "name": "The Ancient Factory", "levels": ["level5", "level6"] },
+    { "id": "swamp", "name": "The Poison Swamp", "levels": ["level4"] },
+    { "id": "lake", "name": "The Crystal Lake", "levels": [] },
+    { "id": "portal", "name": "The Return Portal", "levels": [], "requiredGemsPercent": 80 }
+  ],
   "levels": [
     { "id": "level1", "name": "First Steps" },
     { "id": "level2", "name": "Two Paths" },

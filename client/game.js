@@ -5,7 +5,8 @@
 //   -> home (Play / Settings)
 //   -> menu (room code / PIN, once per session)
 //   -> character selection (fire / water, never the same)
-//   -> level selection, shared: one player proposes, the other confirms
+//   -> land selection -> level selection, shared: one player proposes, the other confirms
+//   -> story scenes (first time; Skip if both completed the level)
 //   -> playing <-> dead (restart) -> complete (Play again / Next level / Levels)
 // The room lasts until a player goes back to Home.
 
@@ -21,6 +22,13 @@ import {
   INTERPOLATION_DELAY,
 } from '/shared/constants.js';
 import { createPlayer, stepPlayer, playerSnapshot, createElevatorState, stepElevators } from '/shared/physics.js';
+import {
+  emptyProgress,
+  normalizeProgress,
+  addLevelResult,
+  computeProgressView,
+  findLevel,
+} from '/shared/progress.js';
 import { createInput } from './input.js';
 import { createRenderer } from './render.js';
 
@@ -51,8 +59,16 @@ const loadingText = $('loading-text');
 
 const homeEl = $('home');
 const settingsEl = $('settings');
+const landsEl = $('lands');
+const landList = $('land-list');
+const landsCode = $('lands-code');
+const landsGems = $('lands-gems');
+const landsStatus = $('lands-status');
+
 const levelsEl = $('levels');
 const levelList = $('level-list');
+const levelsTitle = $('levels-title');
+const levelsGems = $('levels-gems');
 const levelsCode = $('levels-code');
 const levelsStatus = $('levels-status');
 const proposalEl = $('proposal');
@@ -82,6 +98,18 @@ const completeLevel = $('complete-level');
 const completeStatus = $('complete-status');
 const completeReplay = $('complete-replay');
 const completeNext = $('complete-next');
+const completeGems = $('complete-gems');
+
+const gemHud = $('gem-hud');
+const settingsProgress = $('settings-progress');
+
+const storyEl = $('story');
+const storyImage = $('story-image');
+const storyPlaceholder = $('story-placeholder');
+const storyPlaceholderName = $('story-placeholder-name');
+const storyText = $('story-text');
+const storyDots = $('story-dots');
+const storySkip = $('story-skip');
 
 const messageEl = $('message');
 const messageText = $('message-text');
@@ -91,7 +119,7 @@ const show = (el) => el.classList.remove('hidden');
 const hide = (el) => el.classList.add('hidden');
 
 // Menu screens: only one is visible at a time.
-const SCREENS = { home: homeEl, settings: settingsEl, levels: levelsEl, menu: menuEl, select: selectEl };
+const SCREENS = { home: homeEl, settings: settingsEl, lands: landsEl, levels: levelsEl, menu: menuEl, select: selectEl };
 
 function showScreen(name) {
   for (const [key, el] of Object.entries(SCREENS)) {
@@ -123,10 +151,11 @@ function setSelectStatus(text, isError = false) {
 const input = createInput(controlsEl);
 const socket = io({ autoConnect: false });
 const levels = {}; // levelId -> parsed JSON
+let gameIndex = { lands: [], levels: [] }; // levels/index.json
 let levelIndex = []; // [{ id, name }] from levels/index.json
 let sprites = null; // character sprites (null = draw characters with shapes)
 
-// loading | home | settings | menu (room code) | select | levels | playing | dead | complete
+// loading | home | settings | menu (room code) | select | levels (lands + levels) | story | playing | dead | complete
 let phase = 'loading';
 let roomCode = null;
 let myCharacter = null;
@@ -172,7 +201,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function loadLevelIndex() {
   const response = await fetch('/levels/index.json');
   if (!response.ok) throw new Error('Cannot load the level list');
-  return (await response.json()).levels;
+  return response.json();
 }
 
 // Loads client/sprites/sprites.json and the character images.
@@ -210,6 +239,29 @@ async function loadSprites() {
   }
 }
 
+// Names shown to the players. Internally the characters are always "fire" and "water";
+// the visible names come from "names" in sprites/sprites.json.
+const ELEMENT_NAMES = { [CHARACTER.FIRE]: 'Fire', [CHARACTER.WATER]: 'Water' };
+
+function characterName(character) {
+  return sprites?.names?.[character] ?? ELEMENT_NAMES[character];
+}
+
+// Character cards: name in big, element in small (it tells which pools are safe).
+function applyCharacterNames() {
+  for (const card of cards) {
+    const character = card.dataset.character;
+    card.querySelector('.card-name').textContent = characterName(character);
+    let element = card.querySelector('.card-element');
+    if (!element) {
+      element = document.createElement('div');
+      element.className = 'card-element';
+      card.querySelector('.card-name').after(element);
+    }
+    element.textContent = characterName(character) === ELEMENT_NAMES[character] ? '' : ELEMENT_NAMES[character];
+  }
+}
+
 // Shows the sprite (front-facing frame) on the character selection cards.
 function applySpritePreviews() {
   if (!sprites) return;
@@ -231,9 +283,11 @@ async function boot() {
     setProgress(0.05, 'Loading characters…');
     sprites = await loadSprites();
     applySpritePreviews();
+    applyCharacterNames();
 
     setProgress(0.25, 'Loading levels…');
-    levelIndex = await loadLevelIndex();
+    gameIndex = await loadLevelIndex();
+    levelIndex = gameIndex.levels;
     for (let i = 0; i < levelIndex.length; i++) {
       await loadLevel(levelIndex[i].id);
       setProgress(0.25 + (0.4 * (i + 1)) / levelIndex.length, 'Loading levels…');
@@ -277,7 +331,7 @@ function useLevel(newLevel) {
 // ---------------------------------------------------------------------------
 
 const MENU_PHASES = new Set(['loading', 'home', 'settings', 'menu']);
-const GAME_PHASES = new Set(['playing', 'dead', 'complete']);
+const GAME_PHASES = new Set(['story', 'playing', 'dead', 'complete']);
 
 function goTo(screen) {
   phase = screen;
@@ -285,34 +339,47 @@ function goTo(screen) {
 }
 
 // ---------------------------------------------------------------------------
-// Progress: completed levels are saved on this phone (used later for the story Skip)
+// Progress: completed levels and gems, saved on this phone.
+// It is sent to the server when joining a room; the room merges the progress of the
+// two players (see shared/progress.js).
 // ---------------------------------------------------------------------------
 
-const PROGRESS_KEY = 'babiworld.completedLevels';
+const PROGRESS_KEY = 'babiworld.progress';
+const OLD_PROGRESS_KEY = 'babiworld.completedLevels'; // first version: only completed levels
 
-function completedLevels() {
+function loadProgress() {
   try {
-    return new Set(JSON.parse(localStorage.getItem(PROGRESS_KEY) ?? '[]'));
+    const saved = localStorage.getItem(PROGRESS_KEY);
+    if (saved) return normalizeProgress(JSON.parse(saved));
+    const old = localStorage.getItem(OLD_PROGRESS_KEY);
+    if (old) return normalizeProgress({ completed: JSON.parse(old) });
   } catch {
-    return new Set();
+    // storage not available (e.g. private mode)
+  }
+  return emptyProgress();
+}
+
+function saveProgress(progress) {
+  try {
+    localStorage.setItem(PROGRESS_KEY, JSON.stringify(progress));
+    localStorage.removeItem(OLD_PROGRESS_KEY);
+  } catch {
+    // storage not available: progress just isn't saved
   }
 }
 
-function markCompleted(levelId) {
-  try {
-    const done = completedLevels();
-    done.add(levelId);
-    localStorage.setItem(PROGRESS_KEY, JSON.stringify([...done]));
-  } catch {
-    // storage not available (e.g. private mode): progress just isn't saved
-  }
+// Lands and levels with their unlocked state, for the room (both players' progress merged).
+function roomView() {
+  return computeProgressView(gameIndex, levels, normalizeProgress(room?.progress));
 }
 
-// "Level 1 · First Steps"
+// "Level 1 · First Steps" (numbered inside its land)
 function levelLabel(levelId) {
-  const i = levelIndex.findIndex((l) => l.id === levelId);
-  return i >= 0 ? `Level ${i + 1} · ${levelIndex[i].name}` : levelId;
+  const found = findLevel(roomView(), levelId);
+  return found ? `Level ${found.level.number} · ${found.level.name}` : levelId;
 }
+
+const gemCountText = ({ collected, total }) => `${collected}/${total}`;
 
 $('play-btn').addEventListener('click', () => {
   // A tap is a user gesture: the browser allows fullscreen here (Android).
@@ -323,7 +390,22 @@ $('play-btn').addEventListener('click', () => {
   goTo('menu');
 });
 
-$('settings-btn').addEventListener('click', () => goTo('settings'));
+$('settings-btn').addEventListener('click', () => {
+  renderSettings();
+  goTo('settings');
+});
+
+function renderSettings(message = null) {
+  const view = computeProgressView(gameIndex, levels, loadProgress());
+  const all = view.lands.flatMap((l) => l.levels);
+  const done = all.filter((l) => l.completed).length;
+  settingsProgress.textContent =
+    message ?? `${done}/${all.length} levels completed · ${view.collectedGems}/${view.totalGems} gems`;
+}
+
+$('reset-btn').addEventListener('click', () => {
+  if (phase === 'settings') openConfirm('reset');
+});
 
 // Back buttons with data-back="<screen>"
 for (const button of document.querySelectorAll('[data-back]')) {
@@ -361,7 +443,7 @@ function pressKey(key) {
     }
     roomCode = typedCode;
     setMenuStatus('Joining…');
-    socket.emit('room:join', { code: roomCode });
+    socket.emit('room:join', { code: roomCode, progress: loadProgress() });
     // A tap is a user gesture: re-enter fullscreen in case the player left it.
     enterFullscreen();
   }
@@ -407,19 +489,31 @@ function exitGameView() {
   world = { buttons: {}, doors: {}, elevators: {} };
   elevatorOffsets = {};
   input.reset();
+  stopStory();
   hide(controlsEl);
   hide(quitEl);
   hide(completeEl);
   hide(messageEl);
 }
 
+// Land opened on the level screen (null = list of lands). Only this phone's navigation:
+// the two players can look at different lands; proposals are shared.
+let openLand = null;
+let lastProposalKey = null;
+
 // Shows the right lobby screen for the current room status.
 function showLobby() {
   if (!room) return;
   if (room.status === 'levels') {
     phase = 'levels';
-    renderLevels();
-    showScreen('levels');
+    // A new proposal from the other player opens its land, so the "Play" button is visible.
+    const proposal = room.proposal;
+    const key = proposal ? `${proposal.by}:${proposal.levelId}` : null;
+    if (key !== lastProposalKey && proposal && proposal.by !== socket.id) {
+      openLand = findLevel(roomView(), proposal.levelId)?.land.id ?? openLand;
+    }
+    lastProposalKey = key;
+    renderLevelScreens();
   } else {
     phase = 'select';
     renderSelect();
@@ -429,7 +523,7 @@ function showLobby() {
 
 // ---------------------------------------------------------------------------
 // Character selection
-// Each player taps Fire or Water. A character taken by the other player is disabled.
+// Each player taps a character (fire or water). A character taken by the other player is disabled.
 // Tapping the other free card switches character. When both have chosen, the room
 // moves on to the level selection.
 // ---------------------------------------------------------------------------
@@ -452,7 +546,7 @@ function renderSelect() {
   if (!theirs) {
     setSelectStatus(otherLeft ? 'The other player left. Waiting for someone to join…' : 'Waiting for the other player to join…');
   } else if (!mine?.character) {
-    setSelectStatus('Choose Fire or Water');
+    setSelectStatus(`Choose ${characterName(CHARACTER.FIRE)} or ${characterName(CHARACTER.WATER)}`);
   } else {
     setSelectStatus('Waiting for the other player to choose…');
   }
@@ -484,41 +578,109 @@ function leaveRoom() {
 }
 
 // ---------------------------------------------------------------------------
-// Level selection (shared by both players)
+// Land and level selection (shared by both players)
+// Lands: the first one is open, the next ones unlock when the previous land is
+// completed, the last one needs gems. Levels unlock one after the other.
 // Tapping a level proposes it; the other player confirms with "Play"
 // (or by tapping the same level). Tapping another level changes the proposal.
 // ---------------------------------------------------------------------------
 
-function renderLevels() {
+function renderLevelScreens() {
+  const view = roomView();
+  const land = openLand && view.lands.find((l) => l.id === openLand && l.unlocked && !l.comingSoon);
+  if (land) {
+    renderLevels(view, land);
+    showScreen('levels');
+  } else {
+    openLand = null;
+    renderLands(view);
+    showScreen('lands');
+  }
+}
+
+function proposalStatus() {
+  const proposal = room.proposal;
+  if (!proposal) return otherQuit ? 'The other player went back to the level selection' : null;
+  if (proposal.by === socket.id) return `You proposed ${levelLabel(proposal.levelId)}. Waiting for the other player…`;
+  return `The other player proposes ${levelLabel(proposal.levelId)}`;
+}
+
+function renderLands(view) {
+  landsCode.textContent = room.code;
+  landsGems.innerHTML = `<span class="gem-count">${view.collectedGems}/${view.totalGems} gems</span>`;
+  const proposedLand = room.proposal ? findLevel(view, room.proposal.levelId)?.land.id : null;
+
+  landList.innerHTML = '';
+  view.lands.forEach((land, i) => {
+    const card = document.createElement('button');
+    card.className = `land-card land-${land.id}`;
+    const open = land.unlocked && !land.comingSoon;
+    if (!open) card.classList.add('locked');
+    if (land.id === proposedLand) card.classList.add('proposed-here');
+
+    let info;
+    if (!land.unlocked) info = land.lockReason;
+    else if (land.comingSoon) info = 'Coming soon';
+    else info = `<span class="gem-count">${gemCountText(land.gems)}</span>`;
+
+    card.innerHTML = `
+      <span class="land-number">${i + 1}</span>
+      ${land.unlocked ? '' : '<span class="lock-icon" aria-hidden="true">&#128274;</span>'}
+      <span class="land-name"></span>
+      <span class="land-info">${info}</span>`;
+    card.querySelector('.land-name').textContent = land.name;
+
+    card.addEventListener('click', () => {
+      if (phase !== 'levels') return;
+      if (open) {
+        openLand = land.id;
+        renderLevelScreens();
+      } else {
+        landsStatus.textContent = land.unlocked ? `${land.name}: coming soon` : `${land.name} is locked: ${land.lockReason.toLowerCase()}`;
+      }
+    });
+    landList.appendChild(card);
+  });
+
+  landsStatus.textContent = proposalStatus() ?? 'Choose a land';
+}
+
+function renderLevels(view, land) {
   levelsCode.textContent = room.code;
-  const done = completedLevels();
+  levelsTitle.textContent = land.name;
+  levelsGems.innerHTML = `<span class="gem-count">${gemCountText(land.gems)} gems</span>`;
   const proposal = room.proposal;
   const mineProposal = proposal?.by === socket.id;
 
   levelList.innerHTML = '';
-  levelIndex.forEach((info, i) => {
+  for (const info of land.levels) {
     const card = document.createElement('button');
     card.className = 'level-card';
-    card.innerHTML = `<span class="level-number">${i + 1}</span><span class="level-name"></span>`;
-    card.querySelector('.level-name').textContent = info.name;
-    if (done.has(info.id)) card.insertAdjacentHTML('beforeend', '<span class="level-done" aria-label="Completed">&#10003;</span>');
-    if (proposal?.levelId === info.id) card.classList.add(mineProposal ? 'proposed' : 'proposed-other');
-    card.addEventListener('click', () => {
-      if (phase === 'levels') socket.emit('level:propose', info.id);
-    });
+    if (info.unlocked) {
+      card.innerHTML = `
+        <span class="level-number">${info.number}</span>
+        <span class="level-name"></span>
+        <span class="gem-count">${gemCountText(info.gems)}</span>`;
+      card.querySelector('.level-name').textContent = info.name;
+      if (info.completed) card.insertAdjacentHTML('beforeend', '<span class="level-done" aria-label="Completed">&#10003;</span>');
+      if (proposal?.levelId === info.id) card.classList.add(mineProposal ? 'proposed' : 'proposed-other');
+      card.addEventListener('click', () => {
+        if (phase === 'levels') socket.emit('level:propose', info.id);
+      });
+    } else {
+      card.classList.add('locked');
+      card.disabled = true;
+      card.innerHTML = `
+        <span class="lock-icon" aria-hidden="true">&#128274;</span>
+        <span class="level-name">Level ${info.number}</span>`;
+    }
     levelList.appendChild(card);
-  });
-
-  const locked = document.createElement('button');
-  locked.className = 'level-card locked';
-  locked.disabled = true;
-  locked.innerHTML = '<span class="level-number">?</span><span class="level-name">Coming soon</span>';
-  levelList.appendChild(locked);
+  }
 
   // Proposal banner
   if (!proposal) {
     hide(proposalEl);
-    levelsStatus.textContent = otherQuit ? 'The other player went back to the level selection' : 'Tap a level to propose it to the other player';
+    levelsStatus.textContent = proposalStatus() ?? 'Tap a level to propose it to the other player';
   } else if (mineProposal) {
     proposalText.textContent = `You proposed ${levelLabel(proposal.levelId)}`;
     hide(proposalAccept);
@@ -533,8 +695,9 @@ function renderLevels() {
     levelsStatus.textContent = 'Tap Play to start, or choose another level';
   }
 
-  // Preview the proposed level behind the menu
-  if (proposal && levels[proposal.levelId]) useLevel(levels[proposal.levelId]);
+  // Preview the proposed level (or the first one of the land) behind the menu
+  const previewId = proposal?.levelId ?? land.levels[0]?.id;
+  if (previewId && levels[previewId]) useLevel(levels[previewId]);
 }
 
 proposalAccept.addEventListener('click', () => {
@@ -545,8 +708,16 @@ proposalCancel.addEventListener('click', () => {
   if (phase === 'levels') socket.emit('level:cancel');
 });
 
-// "Home" on the level screen: leave the room (with confirmation, the other player stays alone).
+// "Lands" on the level screen: back to the list of lands (withdraws your own proposal).
 $('levels-back').addEventListener('click', () => {
+  if (phase !== 'levels') return;
+  if (room.proposal?.by === socket.id) socket.emit('level:cancel');
+  openLand = null;
+  renderLevelScreens();
+});
+
+// "Home" on the land screen: leave the room (with confirmation, the other player stays alone).
+$('lands-back').addEventListener('click', () => {
   if (phase !== 'levels') return;
   openConfirm('home');
 });
@@ -554,7 +725,8 @@ $('levels-back').addEventListener('click', () => {
 // ---------------------------------------------------------------------------
 // Confirmation dialog
 //   'level': leave the current level (both players go back to the level selection)
-//   'home':  leave the room (from the level selection)
+//   'home':  leave the room (from the land selection)
+//   'reset': delete the progress saved on this phone (from the settings)
 // ---------------------------------------------------------------------------
 
 let confirmAction = null;
@@ -566,11 +738,16 @@ function openConfirm(action) {
     quitText.textContent = 'You will both go back to the level selection.';
     quitCancel.textContent = 'Keep playing';
     quitLeave.textContent = 'Leave';
-  } else {
+  } else if (action === 'home') {
     quitTitle.textContent = 'Leave the room?';
     quitText.textContent = 'The other player will wait in the room for someone to join.';
     quitCancel.textContent = 'Stay';
     quitLeave.textContent = 'Leave';
+  } else if (action === 'reset') {
+    quitTitle.textContent = 'Reset the game?';
+    quitText.textContent = 'All completed levels and gems saved on this phone will be deleted. This cannot be undone.';
+    quitCancel.textContent = 'Cancel';
+    quitLeave.textContent = 'Reset';
   }
   input.reset(); // release any held button
   show(quitEl);
@@ -584,7 +761,11 @@ quitLeave.addEventListener('click', () => {
     socket.emit('level:quit'); // the server sends room:update: both go back to the levels
   } else if (confirmAction === 'home') {
     leaveRoom();
+    openLand = null;
     goTo('home');
+  } else if (confirmAction === 'reset') {
+    saveProgress(emptyProgress());
+    renderSettings('Progress reset: the game starts from the beginning.');
   }
 });
 
@@ -626,6 +807,107 @@ completeNext.addEventListener('click', () => {
 
 $('complete-levels').addEventListener('click', () => {
   if (phase === 'complete') socket.emit('level:quit');
+});
+
+// ---------------------------------------------------------------------------
+// Gems: counters in game (HUD) and on the "Level complete" screen
+// ---------------------------------------------------------------------------
+
+// One pill per color present in the level, e.g. "◆ 1/2" in red.
+function gemPills(lvl, taken = []) {
+  const takenSet = new Set(taken);
+  return ['red', 'blue', 'purple']
+    .map((color) => {
+      const all = (lvl?.gems ?? []).filter((g) => g.color === color);
+      if (all.length === 0) return '';
+      const got = all.filter((g) => takenSet.has(g.id)).length;
+      return `<span class="gem-pill ${color}${got === all.length ? ' full' : ''}">${got}/${all.length}</span>`;
+    })
+    .join('');
+}
+
+function renderGemHud() {
+  gemHud.innerHTML = gemPills(level, world.gems ?? []);
+}
+
+// ---------------------------------------------------------------------------
+// Story scenes: one illustration at a time, with a fade. The server decides when the
+// level starts (it waits for the scenes, or starts right away on Skip).
+// ---------------------------------------------------------------------------
+
+const DEFAULT_SCENE_DURATION = 4; // seconds, same default as the server
+let storyTimers = [];
+
+function playStory(levelId, canSkip) {
+  stopStory();
+  const scenes = levels[levelId]?.story ?? [];
+  if (scenes.length === 0) return;
+
+  phase = 'story';
+  input.reset();
+  showScreen(null);
+  hide(controlsEl);
+  hide(completeEl);
+  hide(quitEl);
+  hide(messageEl);
+
+  // Preload all the illustrations of the scene
+  for (const scene of scenes) new Image().src = `/${scene.image}`;
+
+  storyDots.innerHTML = scenes.map(() => '<span></span>').join('');
+  storySkip.classList.toggle('hidden', !canSkip);
+  storySkip.disabled = false;
+  show(storyEl);
+
+  let at = 0;
+  scenes.forEach((scene, i) => {
+    storyTimers.push(setTimeout(() => showScene(scene, i), at * 1000));
+    at += scene.duration ?? DEFAULT_SCENE_DURATION;
+  });
+}
+
+function showScene(scene, i) {
+  [...storyDots.children].forEach((dot, j) => dot.classList.toggle('active', j === i));
+  const fadeIn = () => {
+    storyImage.classList.remove('fading');
+    storyPlaceholder.classList.remove('fading');
+    storyText.classList.remove('fading');
+  };
+
+  storyText.classList.add('fading');
+  storyImage.classList.add('fading');
+  storyPlaceholder.classList.add('fading');
+
+  storyTimers.push(
+    setTimeout(() => {
+      storyText.textContent = scene.text ?? '';
+      storyImage.onload = () => {
+        show(storyImage);
+        hide(storyPlaceholder);
+        fadeIn();
+      };
+      // Illustration not drawn yet: show a placeholder with the expected file name
+      storyImage.onerror = () => {
+        hide(storyImage);
+        storyPlaceholderName.textContent = `client/${scene.image}`;
+        show(storyPlaceholder);
+        fadeIn();
+      };
+      storyImage.src = `/${scene.image}`;
+    }, i === 0 ? 0 : 350),
+  );
+}
+
+function stopStory() {
+  storyTimers.forEach(clearTimeout);
+  storyTimers = [];
+  hide(storyEl);
+}
+
+storySkip.addEventListener('click', () => {
+  if (phase !== 'story') return;
+  storySkip.disabled = true;
+  socket.emit('story:skip');
 });
 
 // ---------------------------------------------------------------------------
@@ -674,11 +956,13 @@ socket.on('game:start', async ({ levelId, world: startWorld, players }) => {
   otherQuit = false;
 
   input.reset();
+  stopStory();
   showScreen(null); // hide every menu screen
   hide(quitEl);
   hide(completeEl);
   hide(messageEl);
   show(controlsEl);
+  renderGemHud();
   phase = 'playing';
 });
 
@@ -690,17 +974,24 @@ socket.on('player:state', (data) => {
 
 socket.on('world:update', (newWorld) => {
   world = newWorld;
+  renderGemHud();
+});
+
+socket.on('story:start', ({ levelId, canSkip }) => {
+  playStory(levelId, canSkip);
 });
 
 socket.on('player:died', ({ character }) => {
   phase = 'dead';
-  const who = character === myCharacter ? 'You died!' : `${character === CHARACTER.FIRE ? 'Fire' : 'Water'} died!`;
+  const who = character === myCharacter ? 'You died!' : `${characterName(character)} died!`;
   showMessage(who, 'Restarting…');
 });
 
-socket.on('level:complete', ({ levelId, nextLevelId }) => {
+socket.on('level:complete', ({ levelId, nextLevelId, gems }) => {
   phase = 'complete';
-  markCompleted(levelId);
+  // Save on this phone: the level and the gems taken in this run (they add up across runs).
+  saveProgress(addLevelResult(loadProgress(), levelId, gems));
+  completeGems.innerHTML = gemPills(levels[levelId], gems);
 
   input.reset();
   hide(controlsEl);
@@ -734,7 +1025,7 @@ socket.on('connect', () => {
     showScreen(null);
     showMessage('Reconnected', `Rejoining room ${roomCode}…`);
     phase = 'select';
-    socket.emit('room:join', { code: roomCode });
+    socket.emit('room:join', { code: roomCode, progress: loadProgress() });
   }
 });
 

@@ -41,5 +41,22 @@
   "exits": [
     { "id": "exit_fire", "character": "fire", "col": 28, "row": 5, "width": 1, "height": 2 },
     { "id": "exit_water", "character": "water", "col": 8, "row": 5, "width": 1, "height": 2 }
+  ],
+  "gems": [
+    { "id": "gem_red_1", "color": "red", "col": 23, "row": 16 },
+    { "id": "gem_red_2", "color": "red", "col": 21, "row": 6 },
+    { "id": "gem_blue_1", "color": "blue", "col": 10, "row": 6 },
+    { "id": "gem_blue_2", "color": "blue", "col": 5, "row": 5 },
+    { "id": "gem_purple_1", "color": "purple", "col": 16, "row": 4 }
+  ],
+  "story": [
+    {
+      "image": "story/factory-intro.jpg",
+      "text": "Beyond the caves, the ground started to hum. An ancient factory, still running."
+    },
+    {
+      "image": "story/factory-1.jpg",
+      "text": "Old machines that only move when someone holds the switch."
+    }
   ]
 }

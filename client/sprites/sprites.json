@@ -12,6 +12,11 @@
     "water": "sprites/marga_icon.png"
   },
 
+  "names": {
+    "fire": "Luigi",
+    "water": "Marga"
+  },
+
   "preview": { "row": 24, "frame": 0 },
 
   "animations": {

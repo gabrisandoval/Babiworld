@@ -24,12 +24,16 @@
 //              property "travel" (int) = tiles it moves while its button is pressed (positive = up)
 //              property "speed" (float, optional) = tiles per second (default 3)
 //     exit     property "character" = fire | water    (one per character, e.g. 1×2)
+//     gem      property "color" = red | blue | purple (1×1; red: fire only, blue: water only,
+//              purple: either, put it where teamwork is needed). Name optional (id).
+//
+// The "lands" of levels/index.json are written by hand and kept as they are.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { TILE, CHARACTER, GRID_COLS, GRID_ROWS } from '../shared/constants.js';
+import { TILE, CHARACTER, GEM, GRID_COLS, GRID_ROWS } from '../shared/constants.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -46,6 +50,7 @@ const TILE_TYPES = {
 };
 
 const CHARACTERS = Object.values(CHARACTER);
+const GEM_COLORS = Object.values(GEM);
 
 // Tiled stores flip/rotation flags in the 3 highest bits of a tile id: remove them.
 const GID_MASK = 0x1fffffff;
@@ -140,6 +145,7 @@ function convertMap(mapFile) {
   const doors = [];
   const elevators = [];
   const exits = [];
+  const gems = [];
 
   for (const obj of objectLayer?.objects ?? []) {
     const kind = obj.type || obj.class;
@@ -203,8 +209,16 @@ function convertMap(mapFile) {
         }
         break;
 
+      case 'gem':
+        if (!GEM_COLORS.includes(p.color)) {
+          errors.push(`${label}: property "color" must be red, blue or purple.`);
+        } else {
+          gems.push({ id: obj.name || `gem_${gems.length + 1}`, color: p.color, col, row });
+        }
+        break;
+
       default:
-        errors.push(`Object ${obj.id} has unknown class "${kind}" (use spawn, button, door, elevator or exit).`);
+        errors.push(`Object ${obj.id} has unknown class "${kind}" (use spawn, button, door, elevator, exit or gem).`);
     }
   }
 
@@ -214,7 +228,7 @@ function convertMap(mapFile) {
     if (exits.filter((e) => e.character === c).length !== 1) errors.push(`There must be exactly one exit for ${c}.`);
   }
 
-  const ids = [...buttons, ...doors, ...elevators, ...exits].map((o) => o.id);
+  const ids = [...buttons, ...doors, ...elevators, ...exits, ...gems].map((o) => o.id);
   const duplicates = ids.filter((id, i) => id && ids.indexOf(id) !== i);
   if (duplicates.length) errors.push(`Duplicate object names: ${[...new Set(duplicates)].join(', ')}.`);
 
@@ -241,6 +255,7 @@ function convertMap(mapFile) {
     doors,
     elevators,
     exits,
+    gems,
   };
 }
 
@@ -275,13 +290,16 @@ function formatLevel(level) {
     `"doors": ${list(level.doors)}`,
     ...(level.elevators?.length ? [`"elevators": ${list(level.elevators)}`] : []),
     `"exits": ${list(level.exits)}`,
+    ...(level.gems?.length ? [`"gems": ${list(level.gems)}`] : []),
   ];
   if (level.story) fields.push(`"story": ${indent(JSON.stringify(level.story, null, 2), 2)}`);
   return `{\n  ${fields.join(',\n  ')}\n}\n`;
 }
 
+// The lands are kept exactly as written by hand; only the "levels" list is updated.
 function formatIndex(index) {
-  return `{\n  "levels": [\n${index.levels.map((l) => `    ${inline(l)}`).join(',\n')}\n  ]\n}\n`;
+  const lands = index.lands ? `  "lands": [\n${index.lands.map((l) => `    ${inline(l)}`).join(',\n')}\n  ],\n` : '';
+  return `{\n${lands}  "levels": [\n${index.levels.map((l) => `    ${inline(l)}`).join(',\n')}\n  ]\n}\n`;
 }
 
 function saveLevel(level) {
@@ -305,6 +323,7 @@ function saveLevel(level) {
     doors: level.doors,
     elevators: level.elevators,
     exits: level.exits,
+    gems: level.gems,
     ...(level.story ? { story: level.story } : {}),
   };
   fs.writeFileSync(levelFile, formatLevel(ordered));

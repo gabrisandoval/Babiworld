@@ -37,5 +37,42 @@
   "exits": [
     { "id": "exit_fire", "character": "fire", "col": 2, "row": 7, "width": 1, "height": 2 },
     { "id": "exit_water", "character": "water", "col": 4, "row": 7, "width": 1, "height": 2 }
+  ],
+  "gems": [
+    { "id": "gem_red_1", "color": "red", "col": 6, "row": 16 },
+    { "id": "gem_blue_1", "color": "blue", "col": 11, "row": 16 },
+    { "id": "gem_red_2", "color": "red", "col": 21, "row": 12 },
+    { "id": "gem_blue_2", "color": "blue", "col": 13, "row": 10 },
+    { "id": "gem_purple_1", "color": "purple", "col": 3, "row": 6 }
+  ],
+  "story": [
+    {
+      "image": "story/1.png",
+      "text": "Luigi and Marga loved exploring the old caves beyond the hill."
+    },
+    {
+      "image": "story/2.png",
+      "text": "Deep inside, they found a stone arch glowing red and blue."
+    },
+    {
+      "image": "story/3.png",
+      "text": "The moment they stepped through, the light swallowed them."
+    },
+    {
+      "image": "story/4.png",
+      "text": "They woke up in a strange world. The arch behind them was dark and silent."
+    },
+    {
+      "image": "story/5.png",
+      "text": "Luigi's hands burned like fire. Marga's flowed like water."
+    },
+    {
+      "image": "story/6.png",
+      "text": "Carved in the stone: \"Only the light of the gems can open the way home.\""
+    },
+    {
+      "image": "story/caves-1.jpg",
+      "text": "The old doors only open for those who work together."
+    }
   ]
 }

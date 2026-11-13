@@ -39,5 +39,18 @@
   "exits": [
     { "id": "exit_fire", "character": "fire", "col": 14, "row": 1, "width": 1, "height": 2 },
     { "id": "exit_water", "character": "water", "col": 17, "row": 1, "width": 1, "height": 2 }
+  ],
+  "gems": [
+    { "id": "gem_red_1", "color": "red", "col": 2, "row": 10 },
+    { "id": "gem_red_2", "color": "red", "col": 10, "row": 6 },
+    { "id": "gem_blue_1", "color": "blue", "col": 29, "row": 10 },
+    { "id": "gem_blue_2", "color": "blue", "col": 21, "row": 6 },
+    { "id": "gem_purple_1", "color": "purple", "col": 16, "row": 1 }
+  ],
+  "story": [
+    {
+      "image": "story/caves-3.jpg",
+      "text": "Two towers, one room at the top. Each of them had to climb alone."
+    }
   ]
 }
